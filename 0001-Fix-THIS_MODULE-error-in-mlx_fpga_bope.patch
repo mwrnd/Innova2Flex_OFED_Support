@@ -1,0 +1,25 @@
+From d16b19e1cd70d192eb2bd0b15758362a64233b43 Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Tue, 25 Nov 2025 13:22:18 -0500
+Subject: [PATCH] Fix THIS_MODULE error in mlx_fpga_bope
+
+---
+ mlx_fpga_bope.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mlx_fpga_bope.c b/mlx_fpga_bope.c
+index be3479f..9106a8f 100644
+--- a/mlx_fpga_bope.c
++++ b/mlx_fpga_bope.c
+@@ -443,7 +443,7 @@ static int __init bope_driver_init(void)
+ 		return -1;
+ 	}
+ 
+-	g_char_class = class_create(THIS_MODULE, DRV_NAME);
++	g_char_class = class_create(DRV_NAME);
+ 	if ( g_char_class == NULL ) 
+ 	{
+ 		unregister_chrdev_region (g_dev_num, MAX_DEV);
+-- 
+2.43.0
+

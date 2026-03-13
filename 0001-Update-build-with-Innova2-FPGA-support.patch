@@ -1,0 +1,277 @@
+From dec1b4e18857362813b9ae7a757b87351fbd366e Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Wed, 18 Feb 2026 21:41:27 -0500
+Subject: [PATCH] Update build system with Innova2 FPGA support
+
+---
+ ofed_scripts/configure | 22 ++++++++++++++++++----
+ compat/aclocal.m4      |  5 +++++
+ compat/configure       | 31 +++++++++++++++++++++++++++++++
+ 3 file changed, 54 insertions(+), 4 deletions(-)
+
+diff --git a/ofed_scripts/configure b/ofed_scripts/configure
+index 53353fd..c64da08 100755
+--- a/ofed_scripts/configure
++++ b/ofed_scripts/configure
+@@ -104,8 +104,11 @@ Usage:  `basename $0` [options]
+     --with-mlx5_debug-mod         make CONFIG_MLX5_DEBUG=y [yes]
+     --without-mlx5_debug-mod      [no]
+ 
+-    --with-mlxfw-mod              make CONFIG_MLXFW=m [no]
+-    --without-mlxfw-mod           [yes]
++    --with-mlxfw-mod              make CONFIG_MLXFW=m [yes]
++    --without-mlxfw-mod           [no]
++
++    --with-innova-flex            make CONFIG_MLX5_ACCEL=y CONFIG_MLX5_FPGA=y CONFIG_MLX5_FPGA_TOOLS=m CONFIG_MLX5_EN_TLS=y [yes]
++    --without-innova-flex         [no]
+ 
+     --with-mlx5-ipsec             make CONFIG_MLX5_ACCEL=y CONFIG_MLX5_IPSEC=y CONFIG_MLX5_EN_IPSEC=y [no]
+     --without-mlx5-ipsec          [yes]
+@@ -909,7 +912,8 @@ CONFIG_IPOIB_VERSION=${CONFIG_IPOIB_VERSION:-''}
+ # From OFED 5.3 FPGA feature disabled and inbox FPGA configs unset
+ CONFIG_MLX5_FPGA_TLS=""
+ CONFIG_MLX5_FPGA_IPSEC=""
+-CONFIG_MLX5_FPGA=""
++CONFIG_MLX5_FPGA=${CONFIG_MLX5_FPGA:-''}
++CONFIG_MLX5_FPGA_TOOLS=${CONFIG_MLX5_FPGA_TOOLS:-''}
+ 
+ CONFIG_INFINIBAND_IPOIB_DEBUG=${CONFIG_INFINIBAND_IPOIB_DEBUG:-''}
+ CONFIG_INFINIBAND_ISER=${CONFIG_INFINIBAND_ISER:-''}
+@@ -1325,6 +1329,16 @@ main()
+ 		--without-mlxfw-mod)
+ 			CONFIG_MLXFW=
+ 			;;
++		--with-innova-flex)
++			CONFIG_MLX5_ACCEL="y"
++			CONFIG_MLX5_EN_TLS="y"
++			CONFIG_MLX5_FPGA="y"
++			CONFIG_MLX5_FPGA_TOOLS="m"
++		;;
++		--without-innova-flex)
++			CONFIG_MLX5_FPGA=
++			CONFIG_MLX5_FPGA_TOOLS=
++		;;
+ 		--with-mlx5-ipsec)
+ 			CONFIG_MLX5_ACCEL="y"
+ 			CONFIG_MLX5_IPSEC="y"
+@@ -1356,7 +1370,7 @@ main()
+ 			CONFIG_MLX5_DEBUG="y"
+ 			CONFIG_MLX5_ACCEL="y"
+ 			CONFIG_MLX5_TLS="y"
+-			CONFIG_MLX5_EN_TLS="y"
++#			CONFIG_MLX5_EN_TLS="y"
+ 			add_conf "# Load MLX5 modules" "MLX5_LOAD=yes"
+ 			;;
+ 		--with-mlx5-core-only-mod)
+diff --git a/compat/aclocal.m4 b/compat/aclocal.m4
+index 17fb7f5..1fcec9a 100644
+--- a/compat/aclocal.m4
++++ b/compat/aclocal.m4
+@@ -244,6 +244,7 @@ AC_CACHE_CHECK([dependency style of $depcc],
+     # overwrite some of them when testing with obscure command lines.
+     # This happens at least with the AIX C compiler.
+     : > sub/conftest.c
++    echo 'MODULE_LICENSE("GPL");'   >> sub/conftest.c
+     for i in 1 2 3 4 5 6; do
+       echo '#include "conftst'$i'.h"' >> sub/conftest.c
+       # Using ": > sub/conftst$i.h" creates only sub/conftst1.h with
+@@ -286,6 +287,7 @@ AC_CACHE_CHECK([dependency style of $depcc],
+        depfile=sub/conftest.Po tmpdepfile=sub/conftest.TPo \
+        $SHELL ./depcomp $depcc -c $am__minus_obj sub/conftest.c \
+          >/dev/null 2>conftest.err &&
++       echo 'MODULE_LICENSE("GPL");'   >> sub/conftest.c
+        grep sub/conftst1.h sub/conftest.Po > /dev/null 2>&1 &&
+        grep sub/conftst6.h sub/conftest.Po > /dev/null 2>&1 &&
+        grep $am__obj sub/conftest.Po > /dev/null 2>&1 &&
+@@ -1513,10 +1515,13 @@ AC_DEFUN([LB_LINUX_COMPILE_IFELSE],
+ [m4_ifvaln([$1], [AC_LANG_CONFTEST([$1])])dnl
+ MAKE=${MAKE:-make}
+ rm -f build/conftest.o build/conftest.mod.c build/conftest.ko build/output.log
++echo 'MODULE_LICENSE("GPL");'  >>  conftest.c
+ AS_IF([AC_TRY_COMMAND(cp conftest.c build && env $CROSS_VARS $MAKE -d [$2] ${LD:+"LD=$CROSS_COMPILE$LD"} CC="$CROSS_COMPILE$CC" -f $PWD/build/Makefile MLNX_LINUX_CONFIG=$LINUX_CONFIG LINUXINCLUDE="-include generated/autoconf.h $XEN_INCLUDES $EXTRA_MLNX_INCLUDE -I$LINUX/arch/$SRCARCH/include -I$LINUX_OBJ/arch/$SRCARCH/include/generated -I$LINUX_OBJ/include -I$LINUX/arch/$SRCARCH/include/uapi -I$LINUX_OBJ/arch/$SRCARCH/include/generated/uapi -I$LINUX/include -I$LINUX/include/uapi -I$LINUX_OBJ/include/generated/uapi  -I$LINUX/arch/$SRCARCH/include -I$LINUX_OBJ/arch/$SRCARCH/include/generated -I$LINUX/arch/$SRCARCH/include -I$LINUX/arch/$SRCARCH/include/generated -I$LINUX_OBJ/include -I$LINUX/include -I$LINUX_OBJ/include2 $CONFIG_INCLUDE_FLAG" -o tmp_include_depends -o scripts -o include/config/MARKER -C $LINUX_OBJ EXTRA_CFLAGS="-Werror-implicit-function-declaration -Wno-unused-variable -Wno-uninitialized $EXTRA_KCFLAGS" $CROSS_VARS M=$PWD/build >/dev/null 2>build/output.log; [[[ $? -ne 0 ]]] && cat build/output.log 1>&2 && false || config/warning_filter.sh build/output.log) >/dev/null && AC_TRY_COMMAND([$3])],
+ 	[$4],
+ 	[_AC_MSG_LOG_CONFTEST
+ m4_ifvaln([$5],[$5])dnl])
++cp build/conftest.c ~/conftest_build.c
++cp conftest.c ~/conftest_.c
+ rm -f build/conftest.o build/conftest.mod.c build/conftest.mod.o build/conftest.ko m4_ifval([$1], [build/conftest.c conftest.c])[]dnl
+ ])
+ 
+diff --git a/compat/configure b/compat/configure
+index c54a7dd..5b887fd 100755
+--- a/compat/configure
++++ b/compat/configure
+@@ -2084,6 +2084,7 @@ cat >>confdefs.h <<_ACEOF
+ _ACEOF
+ 
+ 
++
+ # Let the site file select an alternate cache file if it wants to.
+ # Prefer an explicitly selected file to automatically selected ones.
+ ac_site_file1=NONE
+@@ -2844,6 +2845,7 @@ cat >>confdefs.h <<_ACEOF
+ #define VERSION "$VERSION"
+ _ACEOF
+ 
++
+ # Some tools Automake needs.
+ 
+ ACLOCAL=${ACLOCAL-"${am_missing_run}aclocal-${am__api_version}"}
+@@ -3884,6 +3886,7 @@ else
+     # overwrite some of them when testing with obscure command lines.
+     # This happens at least with the AIX C compiler.
+     : > sub/conftest.c
++    echo 'MODULE_LICENSE("GPL");'   >> sub/conftest.c
+     for i in 1 2 3 4 5 6; do
+       echo '#include "conftst'$i'.h"' >> sub/conftest.c
+       # Using ": > sub/conftst$i.h" creates only sub/conftst1.h with
+@@ -3926,6 +3929,7 @@ else
+        depfile=sub/conftest.Po tmpdepfile=sub/conftest.TPo \
+        $SHELL ./depcomp $depcc -c $am__minus_obj sub/conftest.c \
+          >/dev/null 2>conftest.err &&
++       echo 'MODULE_LICENSE("GPL");'   >> sub/conftest.c
+        grep sub/conftst1.h sub/conftest.Po > /dev/null 2>&1 &&
+        grep sub/conftst6.h sub/conftest.Po > /dev/null 2>&1 &&
+        grep $am__obj sub/conftest.Po > /dev/null 2>&1 &&
+@@ -4018,6 +4022,7 @@ else
+     # overwrite some of them when testing with obscure command lines.
+     # This happens at least with the AIX C compiler.
+     : > sub/conftest.c
++    echo 'MODULE_LICENSE("GPL");'   >> sub/conftest.c
+     for i in 1 2 3 4 5 6; do
+       echo '#include "conftst'$i'.h"' >> sub/conftest.c
+       # Using ": > sub/conftst$i.h" creates only sub/conftst1.h with
+@@ -4060,6 +4065,7 @@ else
+        depfile=sub/conftest.Po tmpdepfile=sub/conftest.TPo \
+        $SHELL ./depcomp $depcc -c $am__minus_obj sub/conftest.c \
+          >/dev/null 2>conftest.err &&
++       echo 'MODULE_LICENSE("GPL");'   >> sub/conftest.c
+        grep sub/conftst1.h sub/conftest.Po > /dev/null 2>&1 &&
+        grep sub/conftst6.h sub/conftest.Po > /dev/null 2>&1 &&
+        grep $am__obj sub/conftest.Po > /dev/null 2>&1 &&
+@@ -5436,6 +5442,8 @@ if { ac_try='cp conftest.c build && env $CROSS_VARS $MAKE -d modules ${LD:+"LD=$
+ $as_echo "yes" >&6; }
+ 		XEN_INCLUDES="-I$LINUX/arch/x86/include/mach-xen"
+ 
++  echo 'MODULE_LICENSE("GPL");'   >> conftest.c
++
+ else
+   $as_echo "$as_me: failed program was:" >&5
+ sed 's/^/| /' conftest.$ac_ext >&5
+@@ -5446,6 +5454,8 @@ $as_echo "no" >&6; }
+ 
+ 
+ fi
++cp build/conftest.c ~/conftest_build_configure.c
++cp conftest.c ~/conftest__configure.c
+ rm -f build/conftest.o build/conftest.mod.c build/conftest.mod.o build/conftest.ko build/conftest.c conftest.c
+ 
+ 
+@@ -5497,6 +5507,8 @@ if { ac_try='cp conftest.c build && env $CROSS_VARS $MAKE -d modules ${LD:+"LD=$
+ 	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+ $as_echo "yes" >&6; }
+ 
++  echo 'MODULE_LICENSE("GPL");'   >> conftest.c
++
+ else
+   $as_echo "$as_me: failed program was:" >&5
+ sed 's/^/| /' conftest.$ac_ext >&5
+@@ -5511,6 +5523,8 @@ $as_echo "$as_me: WARNING: If you are trying to build with a kernel-source rpm,
+ 	as_fn_error $? "Kernel modules cannot be built." "$LINENO" 5
+ 
+ fi
++cp build/conftest.c ~/conftest_build_configure.c
++cp conftest.c ~/conftest__configure.c
+ rm -f build/conftest.o build/conftest.mod.c build/conftest.mod.o build/conftest.ko build/conftest.c conftest.c
+ 
+ 
+@@ -5599,6 +5613,8 @@ if { ac_try='cp conftest.c build && env $CROSS_VARS $MAKE -d modules ${LD:+"LD=$
+ 		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+ $as_echo "yes" >&6; }
+ 
++  echo 'MODULE_LICENSE("GPL");'   >> conftest.c
++
+ else
+   $as_echo "$as_me: failed program was:" >&5
+ sed 's/^/| /' conftest.$ac_ext >&5
+@@ -5608,6 +5624,8 @@ sed 's/^/| /' conftest.$ac_ext >&5
+ $as_echo "no" >&6; }
+ 
+ fi
++cp build/conftest.c ~/conftest_build_configure.c
++cp conftest.c ~/conftest__configure.c
+ rm -f build/conftest.o build/conftest.mod.c build/conftest.mod.o build/conftest.ko build/conftest.c conftest.c
+ 
+ 
+@@ -5650,6 +5668,8 @@ if { ac_try='cp conftest.c build && env $CROSS_VARS $MAKE -d modules ${LD:+"LD=$
+ $as_echo "yes" >&6; }
+ 		SUSE_KERNEL="yes"
+ 
++  echo 'MODULE_LICENSE("GPL");'   >> conftest.c
++
+ else
+   $as_echo "$as_me: failed program was:" >&5
+ sed 's/^/| /' conftest.$ac_ext >&5
+@@ -5660,6 +5680,8 @@ $as_echo "no" >&6; }
+ 
+ 
+ fi
++cp build/conftest.c ~/conftest_build_configure.c
++cp conftest.c ~/conftest__configure.c
+ rm -f build/conftest.o build/conftest.mod.c build/conftest.mod.o build/conftest.ko build/conftest.c conftest.c
+ 
+ 
+@@ -5715,6 +5737,7 @@ if { ac_try='cp conftest.c build && env $CROSS_VARS $MAKE -d modules ${LD:+"LD=$
+ 		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+ $as_echo "yes" >&6; }
+ 
++  echo 'MODULE_LICENSE("GPL");'   >> conftest.c
+ 
+ else
+   $as_echo "$as_me: failed program was:" >&5
+@@ -5728,6 +5751,8 @@ $as_echo "no" >&6; }
+ 
+ 
+ fi
++cp build/conftest.c ~/conftest_build_configure.c
++cp conftest.c ~/conftest__configure.c
+ rm -f build/conftest.o build/conftest.mod.c build/conftest.mod.o build/conftest.ko build/conftest.c conftest.c
+ 
+ 
+@@ -5769,6 +5794,7 @@ if { ac_try='cp conftest.c build && env $CROSS_VARS $MAKE -d modules ${LD:+"LD=$
+ 		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+ $as_echo "yes" >&6; }
+ 
++  echo 'MODULE_LICENSE("GPL");'   >> conftest.c
+ 
+ else
+   $as_echo "$as_me: failed program was:" >&5
+@@ -5780,6 +5806,8 @@ $as_echo "no" >&6; }
+ 
+ 
+ fi
++cp build/conftest.c ~/conftest_build_configure.c
++cp conftest.c ~/conftest__configure.c
+ rm -f build/conftest.o build/conftest.mod.c build/conftest.mod.o build/conftest.ko build/conftest.c conftest.c
+ 
+ 
+@@ -5821,6 +5849,7 @@ if { ac_try='cp conftest.c build && env $CROSS_VARS $MAKE -d modules ${LD:+"LD=$
+ 		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+ $as_echo "yes" >&6; }
+ 
++  echo 'MODULE_LICENSE("GPL");'   >> conftest.c
+ 
+ else
+   $as_echo "$as_me: failed program was:" >&5
+@@ -5834,6 +5863,8 @@ $as_echo "no" >&6; }
+ 
+ 
+ fi
++cp build/conftest.c ~/conftest_build_configure.c
++cp conftest.c ~/conftest__configure.c
+ rm -f build/conftest.o build/conftest.mod.c build/conftest.mod.o build/conftest.ko build/conftest.c conftest.c
+ 
+ 
+-- 
+2.43.0
+

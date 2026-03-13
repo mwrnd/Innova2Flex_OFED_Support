@@ -1,0 +1,5966 @@
+From 24b3bc39ce129dc9452fb63ee534249dffd0ab48 Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Wed, 18 Feb 2026 16:50:44 -0500
+Subject: [PATCH] Kcc patches for Innova2 support ported from OFED 5.2
+
+---
+ drivers/net/ethernet/mellanox/Kconfig         |    1 +
+ drivers/net/ethernet/mellanox/Makefile        |    1 +
+ .../net/ethernet/mellanox/mlx5/core/Makefile  |    5 +-
+ .../ethernet/mellanox/mlx5/core/fpga/cmd.c    |  113 +-
+ .../ethernet/mellanox/mlx5/core/fpga/cmd.h    |   52 +-
+ .../ethernet/mellanox/mlx5/core/fpga/conn.c   |  115 +-
+ .../ethernet/mellanox/mlx5/core/fpga/core.c   |  246 ++-
+ .../ethernet/mellanox/mlx5/core/fpga/core.h   |   60 +-
+ .../ethernet/mellanox/mlx5/core/fpga/ipsec.c  | 1589 +++++++++++++++++
+ .../ethernet/mellanox/mlx5/core/fpga/ipsec.h  |   62 +
+ .../ethernet/mellanox/mlx5/core/fpga/sdk.c    |  318 +++-
+ .../ethernet/mellanox/mlx5/core/fpga/sdk.h    |  200 ++-
+ .../ethernet/mellanox/mlx5/core/fpga/tls.c    |  646 +++++++
+ .../ethernet/mellanox/mlx5/core/fpga/tls.h    |   83 +
+ .../ethernet/mellanox/mlx5/core/fpga/trans.c  |  330 ++++
+ .../ethernet/mellanox/mlx5/core/fpga/trans.h  |   65 +
+ .../ethernet/mellanox/mlx5/core/fpga/xfer.c   |  243 +++
+ .../ethernet/mellanox/mlx5/core/fpga/xfer.h   |   41 +
+ .../net/ethernet/mellanox/mlx5/core/main.c    |    2 +-
+ .../net/ethernet/mellanox/mlx5/fpga/Kconfig   |   14 +
+ .../net/ethernet/mellanox/mlx5/fpga/Makefile  |    4 +
+ .../net/ethernet/mellanox/mlx5/fpga/main.c    |  139 ++
+ .../net/ethernet/mellanox/mlx5/fpga/tools.h   |   66 +
+ .../ethernet/mellanox/mlx5/fpga/tools_char.c  |  426 +++++
+ .../ethernet/mellanox/mlx5/fpga/tools_char.h  |   45 +
+ include/linux/mlx5/driver.h                   |    1 +
+ include/linux/mlx5/mlx5_ifc.h                 |    4 +
+ include/linux/mlx5/mlx5_ifc_fpga.h            |  284 +++
+ ofed_scripts/Makefile                         |    1 +
+ ofed_scripts/configure                        |   20 +-
+ ofed_scripts/makefile                         |    1 +
+ 31 files changed, 5136 insertions(+), 41 deletions(-)
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.c
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.h
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.c
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.h
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/core/fpga/trans.c
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/core/fpga/trans.h
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/core/fpga/xfer.c
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/core/fpga/xfer.h
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/fpga/Kconfig
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/fpga/Makefile
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/fpga/main.c
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/fpga/tools.h
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/fpga/tools_char.c
+ create mode 100644 drivers/net/ethernet/mellanox/mlx5/fpga/tools_char.h
+
+diff --git a/drivers/net/ethernet/mellanox/Kconfig b/drivers/net/ethernet/mellanox/Kconfig
+index b4f66eb..217bcb2 100644
+--- a/drivers/net/ethernet/mellanox/Kconfig
++++ b/drivers/net/ethernet/mellanox/Kconfig
+@@ -20,6 +20,7 @@ if NET_VENDOR_MELLANOX
+ 
+ source "drivers/net/ethernet/mellanox/mlx4/Kconfig"
+ source "drivers/net/ethernet/mellanox/mlx5/core/Kconfig"
++source "drivers/net/ethernet/mellanox/mlx5/fpga/Kconfig"
+ source "drivers/net/ethernet/mellanox/mlxsw/Kconfig"
+ source "drivers/net/ethernet/mellanox/mlxfw/Kconfig"
+ source "drivers/net/ethernet/mellanox/mlxbf_gige/Kconfig"
+diff --git a/drivers/net/ethernet/mellanox/Makefile b/drivers/net/ethernet/mellanox/Makefile
+index d4b5f54..7020fbe 100644
+--- a/drivers/net/ethernet/mellanox/Makefile
++++ b/drivers/net/ethernet/mellanox/Makefile
+@@ -5,6 +5,7 @@
+ 
+ obj-$(CONFIG_MLX4_CORE) += mlx4/
+ obj-$(CONFIG_MLX5_CORE) += mlx5/core/
++obj-$(CONFIG_MLX5_FPGA_TOOLS) += mlx5/fpga/
+ obj-$(CONFIG_MLXSW_CORE) += mlxsw/
+ obj-$(CONFIG_MLXFW) += mlxfw/
+ obj-$(CONFIG_MLXBF_GIGE) += mlxbf_gige/
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/Makefile b/drivers/net/ethernet/mellanox/mlx5/core/Makefile
+index 49d9987..d8fc43f 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/Makefile
++++ b/drivers/net/ethernet/mellanox/mlx5/core/Makefile
+@@ -107,8 +107,9 @@ mlx5_core-$(CONFIG_MLX5_CORE_IPOIB) += ipoib/ipoib.o ipoib/ethtool.o ipoib/ipoib
+ #
+ # Accelerations & FPGA
+ #
+-mlx5_core-$(CONFIG_MLX5_FPGA) += fpga/cmd.o fpga/core.o fpga/conn.o fpga/sdk.o
+-
++mlx5_core-$(CONFIG_MLX5_FPGA) += fpga/cmd.o fpga/core.o fpga/conn.o fpga/sdk.o \
++	   			 fpga/tls.o fpga/trans.o fpga/xfer.o
++				 
+ mlx5_core-$(CONFIG_MLX5_MACSEC) += en_accel/macsec.o lib/macsec_fs.o \
+ 				      en_accel/macsec_stats.o
+ 
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/cmd.c b/drivers/net/ethernet/mellanox/mlx5/core/fpga/cmd.c
+index 9a37077..b40de10 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fpga/cmd.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/cmd.c
+@@ -36,6 +36,7 @@
+ 
+ #include "mlx5_core.h"
+ #include "fpga/cmd.h"
++#include "core.h"
+ 
+ #define MLX5_FPGA_ACCESS_REG_SZ (MLX5_ST_SZ_DW(fpga_access_reg) + \
+ 				 MLX5_FPGA_ACCESS_REG_SIZE_MAX)
+@@ -122,6 +123,30 @@ int mlx5_fpga_sbu_caps(struct mlx5_core_dev *dev, void *caps, int size)
+ 	return ret;
+ }
+ 
++static int mlx5_fpga_ctrl_write(struct mlx5_core_dev *dev, u8 op,
++				enum mlx5_fpga_image image)
++{
++	u32 in[MLX5_ST_SZ_DW(fpga_ctrl)] = {0};
++	u32 out[MLX5_ST_SZ_DW(fpga_ctrl)];
++
++	MLX5_SET(fpga_ctrl, in, operation, op);
++	MLX5_SET(fpga_ctrl, in, flash_select_admin, image);
++
++	return mlx5_core_access_reg(dev, in, sizeof(in), out, sizeof(out),
++				    MLX5_REG_FPGA_CTRL, 0, true);
++}
++
++int mlx5_fpga_load(struct mlx5_core_dev *dev, enum mlx5_fpga_image image)
++{
++	return mlx5_fpga_ctrl_write(dev, MLX5_FPGA_CTRL_OPERATION_LOAD, image);
++}
++
++int mlx5_fpga_image_select(struct mlx5_core_dev *dev,
++			   enum mlx5_fpga_image image)
++{
++	return mlx5_fpga_ctrl_write(dev, MLX5_FPGA_CTRL_OPERATION_FLASH_SELECT, image);
++}
++
+ int mlx5_fpga_query(struct mlx5_core_dev *dev, struct mlx5_fpga_query *query)
+ {
+ 	u32 in[MLX5_ST_SZ_DW(fpga_ctrl)] = {0};
+@@ -133,12 +158,71 @@ int mlx5_fpga_query(struct mlx5_core_dev *dev, struct mlx5_fpga_query *query)
+ 	if (err)
+ 		return err;
+ 
+-	query->status = MLX5_GET(fpga_ctrl, out, status);
++	query->image_status = MLX5_GET(fpga_ctrl, out, status);
+ 	query->admin_image = MLX5_GET(fpga_ctrl, out, flash_select_admin);
+ 	query->oper_image = MLX5_GET(fpga_ctrl, out, flash_select_oper);
+ 	return 0;
+ }
+ 
++int mlx5_fpga_ctrl_connect(struct mlx5_core_dev *dev,
++			   enum mlx5_fpga_connect *connect)
++{
++	u32 in[MLX5_ST_SZ_DW(fpga_ctrl)] = {0};
++	u32 out[MLX5_ST_SZ_DW(fpga_ctrl)];
++	int status;
++	int err;
++
++	if (*connect == MLX5_FPGA_CONNECT_QUERY) {
++		err = mlx5_core_access_reg(dev, in, sizeof(in), out,
++					   sizeof(out), MLX5_REG_FPGA_CTRL,
++					   0, false);
++		if (err)
++			return err;
++		status = MLX5_GET(fpga_ctrl, out, status);
++		*connect = (status == MLX5_FDEV_STATE_DISCONNECTED) ?
++			MLX5_FPGA_CONNECT_DISCONNECT :
++			MLX5_FPGA_CONNECT_CONNECT;
++	} else {
++		MLX5_SET(fpga_ctrl, in, operation, *connect);
++		err = mlx5_core_access_reg(dev, in, sizeof(in), out,
++					   sizeof(out), MLX5_REG_FPGA_CTRL,
++					   0, true);
++	}
++	return err;
++}
++
++int mlx5_fpga_query_mtmp(struct mlx5_core_dev *dev,
++			 struct mlx5_fpga_temperature *temp)
++{
++	u32 in[MLX5_ST_SZ_DW(mtmp_reg)] = {0};
++	u32 out[MLX5_ST_SZ_DW(mtmp_reg)] = {0};
++	int err;
++
++	MLX5_SET(mtmp_reg, in, sensor_index, temp->index);
++	MLX5_SET(mtmp_reg, in, mtr,
++		 ((temp->index < MLX5_FPGA_INTERNAL_SENSORS_LOW) ||
++		 (temp->index > MLX5_FPGA_INTERNAL_SENSORS_HIGH)) ? 1 : 0);
++
++	err = mlx5_core_access_reg(dev, in, sizeof(in), out, sizeof(out),
++				   MLX5_REG_MTMP, 0, false);
++	if (err)
++		return err;
++
++	temp->index = MLX5_GET(mtmp_reg, out, sensor_index);
++	temp->temperature = MLX5_GET(mtmp_reg, out, temperature);
++	temp->mte = MLX5_GET(mtmp_reg, out, mte);
++	temp->max_temperature = MLX5_GET(mtmp_reg, out, max_temperature);
++	temp->tee = MLX5_GET(mtmp_reg, out, tee);
++	temp->temperature_threshold_hi = MLX5_GET(mtmp_reg, out,
++		temp_threshold_hi);
++	temp->temperature_threshold_lo = MLX5_GET(mtmp_reg, out,
++		temp_threshold_lo);
++	memcpy(temp->sensor_name, MLX5_ADDR_OF(mtmp_reg, out, sensor_name_hi),
++	       MLX5_FLD_SZ_BYTES(mtmp_reg, sensor_name_hi));
++
++	return 0;
++}
++
+ int mlx5_fpga_create_qp(struct mlx5_core_dev *dev, void *fpga_qpc,
+ 			u32 *fpga_qpn)
+ {
+@@ -233,3 +317,30 @@ int mlx5_fpga_query_qp_counters(struct mlx5_core_dev *dev, u32 fpga_qpn,
+ 
+ 	return ret;
+ }
++
++int mlx5_fpga_shell_counters(struct mlx5_core_dev *dev, bool clear,
++			     struct mlx5_fpga_shell_counters *data)
++{
++	u32 in[MLX5_ST_SZ_DW(fpga_shell_counters)] = {0};
++	u32 out[MLX5_ST_SZ_DW(fpga_shell_counters)];
++	int err;
++
++	MLX5_SET(fpga_shell_counters, in, clear, clear);
++	err = mlx5_core_access_reg(dev, in, sizeof(in), out, sizeof(out),
++				   MLX5_REG_FPGA_SHELL_CNTR, 0, false);
++	if (err)
++		goto out;
++	if (data) {
++		data->ddr_read_requests = MLX5_GET64(fpga_shell_counters, out,
++						     ddr_read_requests);
++		data->ddr_write_requests = MLX5_GET64(fpga_shell_counters, out,
++						      ddr_write_requests);
++		data->ddr_read_bytes = MLX5_GET64(fpga_shell_counters, out,
++						  ddr_read_bytes);
++		data->ddr_write_bytes = MLX5_GET64(fpga_shell_counters, out,
++						   ddr_write_bytes);
++	}
++
++out:
++	return err;
++}
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/cmd.h b/drivers/net/ethernet/mellanox/mlx5/core/fpga/cmd.h
+index 11621d2..88f43ab 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fpga/cmd.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/cmd.h
+@@ -33,6 +33,7 @@
+ #ifndef __MLX5_FPGA_H__
+ #define __MLX5_FPGA_H__
+ 
++#include <linux/in6.h>
+ #include <linux/mlx5/driver.h>
+ 
+ enum mlx5_fpga_id {
+@@ -44,20 +45,28 @@ enum mlx5_fpga_id {
+ 
+ enum mlx5_fpga_image {
+ 	MLX5_FPGA_IMAGE_USER = 0,
+-	MLX5_FPGA_IMAGE_FACTORY,
++	MLX5_FPGA_IMAGE_FACTORY = 1,
++	MLX5_FPGA_IMAGE_MAX = MLX5_FPGA_IMAGE_FACTORY,
++	MLX5_FPGA_IMAGE_FACTORY_FAILOVER = 2,
+ };
+ 
+ enum mlx5_fpga_status {
+ 	MLX5_FPGA_STATUS_SUCCESS = 0,
+ 	MLX5_FPGA_STATUS_FAILURE = 1,
+ 	MLX5_FPGA_STATUS_IN_PROGRESS = 2,
+-	MLX5_FPGA_STATUS_NONE = 0xFFFF,
++	MLX5_FPGA_STATUS_DISCONNECTED = 3,
++};
++
++enum mlx5_fpga_tee {
++	MLX5_FPGA_TEE_DISABLE = 0,
++	MLX5_FPGA_TEE_GENERATE_EVENT = 1,
++	MLX5_FPGA_TEE_GENERATE_SINGLE_EVENT = 2,
+ };
+ 
+ struct mlx5_fpga_query {
+ 	enum mlx5_fpga_image admin_image;
+ 	enum mlx5_fpga_image oper_image;
+-	enum mlx5_fpga_status status;
++	enum mlx5_fpga_status image_status;
+ };
+ 
+ enum mlx5_fpga_qpc_field_select {
+@@ -72,12 +81,49 @@ struct mlx5_fpga_qp_counters {
+ 	u64 rx_total_drop;
+ };
+ 
++struct mlx5_fpga_shell_counters {
++	u64 ddr_read_requests;
++	u64 ddr_write_requests;
++	u64 ddr_read_bytes;
++	u64 ddr_write_bytes;
++};
++
++#define MLX5_FPGA_INTERNAL_SENSORS_LOW 63
++#define MLX5_FPGA_INTERNAL_SENSORS_HIGH 63
++
++struct mlx5_fpga_temperature {
++	u32 temperature;
++	u32 index;
++	u32 tee;
++	u32 max_temperature;
++	u32 temperature_threshold_hi;
++	u32 temperature_threshold_lo;
++	u32 mte;
++	u32 mtr;
++	char sensor_name[16];
++};
++
++enum mlx5_fpga_connect {
++	MLX5_FPGA_CONNECT_QUERY = 0,
++	MLX5_FPGA_CONNECT_DISCONNECT = 0x9,
++	MLX5_FPGA_CONNECT_CONNECT = 0xA,
++};
++
+ int mlx5_fpga_caps(struct mlx5_core_dev *dev);
+ int mlx5_fpga_query(struct mlx5_core_dev *dev, struct mlx5_fpga_query *query);
++int mlx5_fpga_query_mtmp(struct mlx5_core_dev *dev,
++			 struct mlx5_fpga_temperature *temp);
+ int mlx5_fpga_ctrl_op(struct mlx5_core_dev *dev, u8 op);
+ int mlx5_fpga_access_reg(struct mlx5_core_dev *dev, u8 size, u64 addr,
+ 			 void *buf, bool write);
+ int mlx5_fpga_sbu_caps(struct mlx5_core_dev *dev, void *caps, int size);
++int mlx5_fpga_load(struct mlx5_core_dev *dev, enum mlx5_fpga_image image);
++int mlx5_fpga_image_select(struct mlx5_core_dev *dev,
++			   enum mlx5_fpga_image image);
++int mlx5_fpga_ctrl_connect(struct mlx5_core_dev *dev,
++			   enum mlx5_fpga_connect *connect);
++int mlx5_fpga_shell_counters(struct mlx5_core_dev *dev, bool clear,
++			     struct mlx5_fpga_shell_counters *data);
+ 
+ int mlx5_fpga_create_qp(struct mlx5_core_dev *dev, void *fpga_qpc,
+ 			u32 *fpga_qpn);
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/conn.c b/drivers/net/ethernet/mellanox/mlx5/core/fpga/conn.c
+index c4de6bf..2d57702 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fpga/conn.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/conn.c
+@@ -54,7 +54,7 @@ static int mlx5_fpga_conn_map_buf(struct mlx5_fpga_conn *conn,
+ 	if (unlikely(!buf->sg[0].data))
+ 		goto out;
+ 
+-	dma_device = mlx5_core_dma_dev(conn->fdev->mdev);
++	dma_device = &conn->fdev->mdev->pdev->dev;
+ 	buf->sg[0].dma_addr = dma_map_single(dma_device, buf->sg[0].data,
+ 					     buf->sg[0].size, buf->dma_dir);
+ 	err = dma_mapping_error(dma_device, buf->sg[0].dma_addr);
+@@ -86,7 +86,7 @@ static void mlx5_fpga_conn_unmap_buf(struct mlx5_fpga_conn *conn,
+ {
+ 	struct device *dma_device;
+ 
+-	dma_device = mlx5_core_dma_dev(conn->fdev->mdev);
++	dma_device = &conn->fdev->mdev->pdev->dev;
+ 	if (buf->sg[1].data)
+ 		dma_unmap_single(dma_device, buf->sg[1].dma_addr,
+ 				 buf->sg[1].size, buf->dma_dir);
+@@ -115,14 +115,19 @@ static int mlx5_fpga_conn_post_recv(struct mlx5_fpga_conn *conn,
+ 	ix = conn->qp.rq.pc & (conn->qp.rq.size - 1);
+ 	data = mlx5_wq_cyc_get_wqe(&conn->qp.wq.rq, ix);
+ 	data->byte_count = cpu_to_be32(buf->sg[0].size);
+-	data->lkey = cpu_to_be32(conn->fdev->conn_res.mkey);
++	data->lkey = cpu_to_be32(conn->fdev->conn_res.mkey); //mlx5e_res.hw_objs.mkey
+ 	data->addr = cpu_to_be64(buf->sg[0].dma_addr);
+ 
+ 	conn->qp.rq.pc++;
+ 	conn->qp.rq.bufs[ix] = buf;
+ 
+ 	/* Make sure that descriptors are written before doorbell record. */
++#ifdef dma_wmb
+ 	dma_wmb();
++#else
++	wmb();
++#endif
++
+ 	*conn->qp.wq.rq.db = cpu_to_be32(conn->qp.rq.pc & 0xffff);
+ out:
+ 	return err;
+@@ -131,7 +136,12 @@ out:
+ static void mlx5_fpga_conn_notify_hw(struct mlx5_fpga_conn *conn, void *wqe)
+ {
+ 	/* ensure wqe is visible to device before updating doorbell record */
++#ifdef dma_wmb
+ 	dma_wmb();
++#else
++	wmb();
++#endif
++
+ 	*conn->qp.wq.sq.db = cpu_to_be32(conn->qp.sq.pc);
+ 	/* Make sure that doorbell record is visible before ringing */
+ 	wmb();
+@@ -340,6 +350,7 @@ static void mlx5_fpga_conn_handle_cqe(struct mlx5_fpga_conn *conn,
+ 	case MLX5_CQE_REQ_ERR:
+ 		status = ((struct mlx5_err_cqe *)cqe)->syndrome;
+ 		fallthrough;
++
+ 	case MLX5_CQE_REQ:
+ 		mlx5_fpga_conn_sq_cqe(conn, cqe, status);
+ 		break;
+@@ -388,6 +399,7 @@ static inline void mlx5_fpga_conn_cqes(struct mlx5_fpga_conn *conn,
+ 	mlx5_fpga_conn_arm_cq(conn);
+ }
+ 
++
+ static void mlx5_fpga_conn_cq_tasklet(struct tasklet_struct *t)
+ {
+ 	struct mlx5_fpga_conn *conn = from_tasklet(conn, t, cq.tasklet);
+@@ -396,6 +408,16 @@ static void mlx5_fpga_conn_cq_tasklet(struct tasklet_struct *t)
+ 		return;
+ 	mlx5_fpga_conn_cqes(conn, MLX5_FPGA_CQ_BUDGET);
+ }
++/*
++static void mlx5_fpga_conn_cq_tasklet(unsigned long data)
++{
++	struct mlx5_fpga_conn *conn = (void *)data;
++
++	if (unlikely(!conn->qp.active))
++		return;
++	mlx5_fpga_conn_cqes(conn, MLX5_FPGA_CQ_BUDGET);
++}
++*/
+ 
+ static void mlx5_fpga_conn_cq_complete(struct mlx5_core_cq *mcq,
+ 				       struct mlx5_eqe *eqe)
+@@ -487,7 +509,90 @@ err_cqwq:
+ out:
+ 	return err;
+ }
++/*
++static int mlx5_fpga_conn_create_cq(struct mlx5_fpga_conn *conn, int cq_size)
++{
++	struct mlx5_fpga_device *fdev = conn->fdev;
++	struct mlx5_core_dev *mdev = fdev->mdev;
++	u32 temp_cqc[MLX5_ST_SZ_DW(cqc)] = {0};
++	u32 out[MLX5_ST_SZ_DW(create_cq_out)];
++	struct mlx5_wq_param wqp;
++	struct mlx5_cqe64 *cqe;
++	int inlen, err, eqn;
++	unsigned int irqn;
++	void *cqc, *in;
++	__be64 *pas;
++	u32 i;
++
++	cq_size = roundup_pow_of_two(cq_size);
++	MLX5_SET(cqc, temp_cqc, log_cq_size, ilog2(cq_size));
++
++	wqp.buf_numa_node = mdev->priv.numa_node;
++	wqp.db_numa_node  = mdev->priv.numa_node;
++
++	err = mlx5_cqwq_create(mdev, &wqp, temp_cqc, &conn->cq.wq,
++			       &conn->cq.wq_ctrl);
++	if (err)
++		return err;
++
++	for (i = 0; i < mlx5_cqwq_get_size(&conn->cq.wq); i++) {
++		cqe = mlx5_cqwq_get_wqe(&conn->cq.wq, i);
++		cqe->op_own = MLX5_CQE_INVALID << 4 | MLX5_CQE_OWNER_MASK;
++	}
++
++	inlen = MLX5_ST_SZ_BYTES(create_cq_in) +
++		sizeof(u64) * conn->cq.wq_ctrl.buf.npages;
++	in = kvzalloc(inlen, GFP_KERNEL);
++	if (!in) {
++		err = -ENOMEM;
++		goto err_cqwq;
++	}
++
++	err = mlx5_vector2eqn(mdev, smp_processor_id(), &eqn, &irqn);
++	if (err) {
++		kvfree(in);
++		goto err_cqwq;
++	}
++
++	cqc = MLX5_ADDR_OF(create_cq_in, in, cq_context);
++	MLX5_SET(cqc, cqc, log_cq_size, ilog2(cq_size));
++	MLX5_SET(cqc, cqc, c_eqn, eqn);
++	MLX5_SET(cqc, cqc, uar_page, fdev->conn_res.uar->index);
++	MLX5_SET(cqc, cqc, log_page_size, conn->cq.wq_ctrl.buf.page_shift -
++			   MLX5_ADAPTER_PAGE_SHIFT);
++	MLX5_SET64(cqc, cqc, dbr_addr, conn->cq.wq_ctrl.db.dma);
++
++	pas = (__be64 *)MLX5_ADDR_OF(create_cq_in, in, pas);
++	mlx5_fill_page_frag_array(&conn->cq.wq_ctrl.buf, pas);
++
++	err = mlx5_core_create_cq(mdev, &conn->cq.mcq, in, inlen, out, sizeof(out));
++	kvfree(in);
+ 
++	if (err)
++		goto err_cqwq;
++
++	conn->cq.mcq.cqe_sz     = 64;
++	conn->cq.mcq.set_ci_db  = conn->cq.wq_ctrl.db.db;
++	conn->cq.mcq.arm_db     = conn->cq.wq_ctrl.db.db + 1;
++	*conn->cq.mcq.set_ci_db = 0;
++	*conn->cq.mcq.arm_db    = 0;
++	conn->cq.mcq.vector     = 0;
++	conn->cq.mcq.comp       = mlx5_fpga_conn_cq_complete;
++	conn->cq.mcq.irqn       = irqn;
++	conn->cq.mcq.uar        = fdev->conn_res.uar;
++	tasklet_init(&conn->cq.tasklet, mlx5_fpga_conn_cq_tasklet,
++		     (unsigned long)conn);
++
++	mlx5_fpga_dbg(fdev, "Created CQ #0x%x\n", conn->cq.mcq.cqn);
++
++	goto out;
++
++err_cqwq:
++	mlx5_wq_destroy(&conn->cq.wq_ctrl);
++out:
++	return err;
++}
++*/
+ static void mlx5_fpga_conn_destroy_cq(struct mlx5_fpga_conn *conn)
+ {
+ 	tasklet_disable(&conn->cq.tasklet);
+@@ -573,7 +678,6 @@ static int mlx5_fpga_conn_create_qp(struct mlx5_fpga_conn *conn,
+ 	MLX5_SET(qpc, qpc, log_sq_size, ilog2(conn->qp.sq.size));
+ 	MLX5_SET(qpc, qpc, cqn_snd, conn->cq.mcq.cqn);
+ 	MLX5_SET(qpc, qpc, cqn_rcv, conn->cq.mcq.cqn);
+-	MLX5_SET(qpc, qpc, ts_format, mlx5_get_qp_default_ts(mdev));
+ 	MLX5_SET64(qpc, qpc, dbr_addr, conn->qp.wq_ctrl.db.dma);
+ 	if (MLX5_CAP_GEN(mdev, cqe_version) == 1)
+ 		MLX5_SET(qpc, qpc, user_index, 0xFFFFFF);
+@@ -758,7 +862,8 @@ static int mlx5_fpga_conn_connect(struct mlx5_fpga_conn *conn)
+ {
+ 	struct mlx5_fpga_device *fdev = conn->fdev;
+ 	int err;
+-
++	(void)fdev; /* Suppress warning about unused variable */
++	
+ 	MLX5_SET(fpga_qpc, conn->fpga_qpc, state, MLX5_FPGA_QPC_STATE_ACTIVE);
+ 	err = mlx5_fpga_modify_qp(conn->fdev->mdev, conn->fpga_qpn,
+ 				  MLX5_FPGA_QPC_STATE, &conn->fpga_qpc);
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/core.c b/drivers/net/ethernet/mellanox/mlx5/core/fpga/core.c
+index e5c1012..cb5faab 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fpga/core.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/core.c
+@@ -30,6 +30,7 @@
+  * SOFTWARE.
+  */
+ 
++#include <linux/module.h>
+ #include <linux/etherdevice.h>
+ #include <linux/mlx5/driver.h>
+ 
+@@ -38,6 +39,12 @@
+ #include "lib/eq.h"
+ #include "fpga/core.h"
+ #include "fpga/conn.h"
++#include "fpga/trans.h"
++
++static LIST_HEAD(mlx5_fpga_devices);
++static LIST_HEAD(mlx5_fpga_clients);
++/* protects access between client un/registration and device add/remove calls */
++static DEFINE_MUTEX(mlx5_fpga_mutex);
+ 
+ static const char *const mlx5_fpga_error_strings[] = {
+ 	"Null Syndrome",
+@@ -55,16 +62,58 @@ static const char * const mlx5_fpga_qp_error_strings[] = {
+ 	"Retry Counter Expired",
+ 	"RNR Expired",
+ };
++
++static void client_context_destroy(struct mlx5_fpga_device *fdev,
++				   struct mlx5_fpga_client_data *context)
++{
++	mlx5_fpga_dbg(fdev, "Deleting client context %p of client %p\n",
++		      context, context->client);
++	if (context->client->destroy)
++		context->client->destroy(fdev);
++	list_del(&context->list);
++	kfree(context);
++}
++
++static int client_context_create(struct mlx5_fpga_device *fdev,
++				 struct mlx5_fpga_client *client,
++				 struct mlx5_fpga_client_data **pctx)
++{
++	struct mlx5_fpga_client_data *context;
++
++	context = kmalloc(sizeof(*context), GFP_KERNEL);
++	if (!context)
++		return -ENOMEM;
++
++	context->client = client;
++	context->data = NULL;
++	context->added  = false;
++	list_add(&context->list, &fdev->client_data_list);
++
++	pr_err("Adding client context %p client %p\n",
++		      context, client);
++
++	if (client->create)
++	{
++		pr_err("Creating client");
++		client->create(fdev);
++	}
++	if (pctx)
++		*pctx = context;
++	return 0;
++}
++
+ static struct mlx5_fpga_device *mlx5_fpga_device_alloc(void)
+ {
+-	struct mlx5_fpga_device *fdev;
++	struct mlx5_fpga_device *fdev = NULL;
+ 
+ 	fdev = kzalloc(sizeof(*fdev), GFP_KERNEL);
+ 	if (!fdev)
+ 		return NULL;
+ 
+ 	spin_lock_init(&fdev->state_lock);
+-	fdev->state = MLX5_FPGA_STATUS_NONE;
++	init_completion(&fdev->load_event);
++	fdev->fdev_state = MLX5_FDEV_STATE_NONE;
++	INIT_LIST_HEAD(&fdev->client_data_list);
+ 	return fdev;
+ }
+ 
+@@ -108,6 +157,7 @@ static int mlx5_fpga_device_load_check(struct mlx5_fpga_device *fdev)
+ {
+ 	struct mlx5_fpga_query query;
+ 	int err;
++	u32 fpga_id;
+ 
+ 	err = mlx5_fpga_query(fdev->mdev, &query);
+ 	if (err) {
+@@ -117,18 +167,24 @@ static int mlx5_fpga_device_load_check(struct mlx5_fpga_device *fdev)
+ 
+ 	fdev->last_admin_image = query.admin_image;
+ 	fdev->last_oper_image = query.oper_image;
++	fdev->image_status = query.image_status;
+ 
+ 	mlx5_fpga_info(fdev, "Status %u; Admin image %u; Oper image %u\n",
+-		       query.status, query.admin_image, query.oper_image);
++		       query.image_status, query.admin_image, query.oper_image);
+ 
+ 	/* for FPGA lookaside projects FPGA load status is not important */
+ 	if (mlx5_is_fpga_lookaside(MLX5_CAP_FPGA(fdev->mdev, fpga_id)))
+ 		return 0;
+ 
+-	if (query.status != MLX5_FPGA_STATUS_SUCCESS) {
++	/* For Morse projects FPGA has no influence to network functionality */
++	fpga_id = MLX5_CAP_FPGA(fdev->mdev, fpga_id);
++	if (fpga_id == MLX5_FPGA_MORSE || fpga_id == MLX5_FPGA_MORSEQ)
++		return 0;
++
++	if (query.image_status != MLX5_FPGA_STATUS_SUCCESS) {
+ 		mlx5_fpga_err(fdev, "%s image failed to load; status %u\n",
+ 			      mlx5_fpga_image_name(fdev->last_oper_image),
+-			      query.status);
++			      query.image_status);
+ 		return -EIO;
+ 	}
+ 
+@@ -176,10 +232,15 @@ static int fpga_qp_err_event(struct notifier_block *nb, unsigned long event, voi
+ 
+ int mlx5_fpga_device_start(struct mlx5_core_dev *mdev)
+ {
++	struct mlx5_fpga_client_data *client_context;
+ 	struct mlx5_fpga_device *fdev = mdev->fpga;
++	struct mlx5_fpga_conn_attr conn_attr = {0};
++	struct mlx5_fpga_conn *conn;
+ 	unsigned int max_num_qps;
+ 	unsigned long flags;
+ 	u32 fpga_id;
++	u32 vid;
++	u16 pid;
+ 	int err;
+ 
+ 	if (!fdev)
+@@ -196,6 +257,9 @@ int mlx5_fpga_device_start(struct mlx5_core_dev *mdev)
+ 	fpga_id = MLX5_CAP_FPGA(fdev->mdev, fpga_id);
+ 	mlx5_fpga_info(fdev, "FPGA card %s:%u\n", mlx5_fpga_name(fpga_id), fpga_id);
+ 
++	if (fpga_id == MLX5_FPGA_MORSE || fpga_id == MLX5_FPGA_MORSEQ)
++		goto out;
++
+ 	/* No QPs if FPGA does not participate in net processing */
+ 	if (mlx5_is_fpga_lookaside(fpga_id))
+ 		goto out;
+@@ -228,14 +292,54 @@ int mlx5_fpga_device_start(struct mlx5_core_dev *mdev)
+ 	if (err)
+ 		goto err_rsvd_gid;
+ 
++	err = mlx5_fpga_trans_device_init(fdev);
++	if (err) {
++		mlx5_fpga_err(fdev, "Failed to init transaction: %d\n",
++			      err);
++		goto err_conn_init;
++	}
++
++	conn_attr.tx_size = MLX5_FPGA_TID_COUNT;
++	conn_attr.rx_size = MLX5_FPGA_TID_COUNT;
++	conn_attr.recv_cb = mlx5_fpga_trans_recv;
++	conn_attr.cb_arg = fdev;
++	conn = mlx5_fpga_conn_create(fdev, &conn_attr,
++				     MLX5_FPGA_QPC_QP_TYPE_SHELL_QP);
++	if (IS_ERR(conn)) {
++		err = PTR_ERR(conn);
++		mlx5_fpga_err(fdev, "Failed to create shell conn: %d\n", err);
++		goto err_trans;
++	}
++	fdev->shell_conn = conn;
++
+ 	if (fdev->last_oper_image == MLX5_FPGA_IMAGE_USER) {
+ 		err = mlx5_fpga_device_brb(fdev);
+ 		if (err)
+-			goto err_conn_init;
++			goto err_shell_conn;
++
++		vid = MLX5_CAP_FPGA(fdev->mdev, ieee_vendor_id);
++		pid = MLX5_CAP_FPGA(fdev->mdev, sandbox_product_id);
++		mutex_lock(&mlx5_fpga_mutex);
++		list_for_each_entry(client_context, &fdev->client_data_list,
++				    list) {
++			if (client_context->client->add(fdev, vid, pid))
++				continue;
++			client_context->added = true;
++		}
++		mutex_unlock(&mlx5_fpga_mutex);
+ 	}
+ 
+ 	goto out;
+ 
++err_shell_conn:
++	if (fdev->shell_conn) {
++		mlx5_fpga_conn_destroy(fdev->shell_conn);
++		fdev->shell_conn = NULL;
++	}
++
++err_trans:
++	mlx5_fpga_trans_device_cleanup(fdev);
++
+ err_conn_init:
+ 	mlx5_fpga_conn_device_cleanup(fdev);
+ 
+@@ -245,20 +349,25 @@ err_rsvd_gid:
+ 	mlx5_core_unreserve_gids(mdev, max_num_qps);
+ out:
+ 	spin_lock_irqsave(&fdev->state_lock, flags);
+-	fdev->state = err ? MLX5_FPGA_STATUS_FAILURE : MLX5_FPGA_STATUS_SUCCESS;
++	fdev->fdev_state = err ? MLX5_FDEV_STATE_FAILURE : MLX5_FDEV_STATE_SUCCESS;
+ 	spin_unlock_irqrestore(&fdev->state_lock, flags);
+ 	return err;
+ }
+ 
+ int mlx5_fpga_init(struct mlx5_core_dev *mdev)
+ {
+-	struct mlx5_fpga_device *fdev;
++	struct mlx5_fpga_device *fdev = NULL;
++	struct mlx5_fpga_client *client;
++
++	pr_err("Call normal FPGA init\n");
+ 
+ 	if (!MLX5_CAP_GEN(mdev, fpga)) {
+ 		mlx5_core_dbg(mdev, "FPGA capability not present\n");
++		pr_err("FPGA capability not present\n");
+ 		return 0;
+ 	}
+ 
++	pr_err("Initializing FPGA\n");
+ 	mlx5_core_dbg(mdev, "Initializing FPGA\n");
+ 
+ 	fdev = mlx5_fpga_device_alloc();
+@@ -268,28 +377,41 @@ int mlx5_fpga_init(struct mlx5_core_dev *mdev)
+ 	fdev->mdev = mdev;
+ 	mdev->fpga = fdev;
+ 
++	mutex_lock(&mlx5_fpga_mutex);
++
++	list_add_tail(&fdev->list, &mlx5_fpga_devices);
++	list_for_each_entry(client, &mlx5_fpga_clients, list)
++		client_context_create(fdev, client, NULL);
++
++	mutex_unlock(&mlx5_fpga_mutex);
+ 	return 0;
+ }
+ 
+ void mlx5_fpga_device_stop(struct mlx5_core_dev *mdev)
+ {
++	struct mlx5_fpga_client_data *client_context;
+ 	struct mlx5_fpga_device *fdev = mdev->fpga;
+ 	unsigned int max_num_qps;
+ 	unsigned long flags;
+ 	int err;
++	u32 fpga_id;
+ 
+ 	if (!fdev)
+ 		return;
+ 
++	fpga_id = MLX5_CAP_FPGA(mdev, fpga_id);
++	if (fpga_id == MLX5_FPGA_MORSE || fpga_id == MLX5_FPGA_MORSEQ)
++		return;
++
+ 	if (mlx5_is_fpga_lookaside(MLX5_CAP_FPGA(fdev->mdev, fpga_id)))
+ 		return;
+ 
+ 	spin_lock_irqsave(&fdev->state_lock, flags);
+-	if (fdev->state != MLX5_FPGA_STATUS_SUCCESS) {
++	if (fdev->fdev_state != MLX5_FDEV_STATE_SUCCESS) {
+ 		spin_unlock_irqrestore(&fdev->state_lock, flags);
+ 		return;
+ 	}
+-	fdev->state = MLX5_FPGA_STATUS_NONE;
++	fdev->fdev_state = MLX5_FDEV_STATE_NONE;
+ 	spin_unlock_irqrestore(&fdev->state_lock, flags);
+ 
+ 	if (fdev->last_oper_image == MLX5_FPGA_IMAGE_USER) {
+@@ -299,6 +421,20 @@ void mlx5_fpga_device_stop(struct mlx5_core_dev *mdev)
+ 				      err);
+ 	}
+ 
++	mutex_lock(&mlx5_fpga_mutex);
++	list_for_each_entry(client_context, &fdev->client_data_list, list) {
++		if (!client_context->added)
++			continue;
++		client_context->client->remove(fdev);
++		client_context->added = false;
++	}
++	mutex_unlock(&mlx5_fpga_mutex);
++
++	if (fdev->shell_conn) {
++		mlx5_fpga_conn_destroy(fdev->shell_conn);
++		fdev->shell_conn = NULL;
++		mlx5_fpga_trans_device_cleanup(fdev);
++	}
+ 	mlx5_fpga_conn_device_cleanup(fdev);
+ 	mlx5_eq_notifier_unregister(fdev->mdev, &fdev->fpga_err_nb);
+ 	mlx5_eq_notifier_unregister(fdev->mdev, &fdev->fpga_qp_err_nb);
+@@ -309,11 +445,24 @@ void mlx5_fpga_device_stop(struct mlx5_core_dev *mdev)
+ 
+ void mlx5_fpga_cleanup(struct mlx5_core_dev *mdev)
+ {
++	struct mlx5_fpga_client_data *context, *tmp;
+ 	struct mlx5_fpga_device *fdev = mdev->fpga;
+ 
++	if (!fdev)
++		return;
++
++	mutex_lock(&mlx5_fpga_mutex);
++
+ 	mlx5_fpga_device_stop(mdev);
++
++	list_for_each_entry_safe(context, tmp, &fdev->client_data_list, list)
++		client_context_destroy(fdev, context);
++
++	list_del(&fdev->list);
+ 	kfree(fdev);
+ 	mdev->fpga = NULL;
++
++	mutex_unlock(&mlx5_fpga_mutex);
+ }
+ 
+ static const char *mlx5_fpga_syndrome_to_string(u8 syndrome)
+@@ -353,11 +502,17 @@ static int mlx5_fpga_event(struct mlx5_fpga_device *fdev,
+ 	}
+ 
+ 	spin_lock_irqsave(&fdev->state_lock, flags);
+-	switch (fdev->state) {
+-	case MLX5_FPGA_STATUS_SUCCESS:
++	switch (fdev->fdev_state) {
++	case MLX5_FDEV_STATE_SUCCESS:
+ 		mlx5_fpga_warn(fdev, "Error %u: %s\n", syndrome, event_name);
+ 		teardown = true;
+ 		break;
++	case MLX5_FDEV_STATE_IN_PROGRESS:
++		if (syndrome != MLX5_FPGA_ERROR_EVENT_SYNDROME_IMAGE_CHANGED)
++			mlx5_fpga_warn(fdev, "Error while loading %u: %s\n",
++				       syndrome, event_name);
++		complete(&fdev->load_event);
++		break;
+ 	default:
+ 		mlx5_fpga_warn_ratelimited(fdev, "Unexpected error event %u: %s\n",
+ 					   syndrome, event_name);
+@@ -373,3 +528,70 @@ static int mlx5_fpga_event(struct mlx5_fpga_device *fdev,
+ 
+ 	return NOTIFY_OK;
+ }
++
++void mlx5_fpga_client_register(struct mlx5_fpga_client *client)
++{
++	struct mlx5_fpga_client_data *context;
++	struct mlx5_fpga_device *fdev;
++	bool call_add = false;
++	unsigned long flags;
++	u32 vid;
++	u16 pid;
++	int err;
++	
++	pr_err("Client register %s\n", client->name);
++
++	mutex_lock(&mlx5_fpga_mutex);
++
++	pr_err("Client register list_add_tail\n");
++	list_add_tail(&client->list, &mlx5_fpga_clients);
++
++	list_for_each_entry(fdev, &mlx5_fpga_devices, list) {
++
++		err = client_context_create(fdev, client, &context);
++		pr_err("call client_context_create with err=%d\n",err);
++		if (err)
++			continue;
++
++		spin_lock_irqsave(&fdev->state_lock, flags);
++		call_add = (fdev->fdev_state == MLX5_FDEV_STATE_SUCCESS);
++		spin_unlock_irqrestore(&fdev->state_lock, flags);
++
++		if (call_add) {
++			vid = MLX5_CAP_FPGA(fdev->mdev, ieee_vendor_id);
++			pid = MLX5_CAP_FPGA(fdev->mdev, sandbox_product_id);
++			if (!client->add(fdev, vid, pid))
++				context->added = true;
++		}
++	}
++
++	mutex_unlock(&mlx5_fpga_mutex);
++}
++EXPORT_SYMBOL(mlx5_fpga_client_register);
++
++void mlx5_fpga_client_unregister(struct mlx5_fpga_client *client)
++{
++	struct mlx5_fpga_client_data *context, *tmp_context;
++	struct mlx5_fpga_device *fdev;
++
++	pr_debug("Client unregister %s\n", client->name);
++
++	mutex_lock(&mlx5_fpga_mutex);
++
++	list_for_each_entry(fdev, &mlx5_fpga_devices, list) {
++		list_for_each_entry_safe(context, tmp_context,
++					 &fdev->client_data_list,
++					 list) {
++			if (context->client != client)
++				continue;
++			if (context->added)
++				client->remove(fdev);
++			client_context_destroy(fdev, context);
++			break;
++		}
++	}
++
++	list_del(&client->list);
++	mutex_unlock(&mlx5_fpga_mutex);
++}
++EXPORT_SYMBOL(mlx5_fpga_client_unregister);
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/core.h b/drivers/net/ethernet/mellanox/mlx5/core/fpga/core.h
+index 750c320..2467249 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fpga/core.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/core.h
+@@ -40,14 +40,47 @@
+ #include "mlx5_core.h"
+ #include "lib/eq.h"
+ #include "fpga/cmd.h"
++#include "fpga/sdk.h"
++
++/* Represents client-specific and Innova device-specific information */
++struct mlx5_fpga_client_data {
++	struct list_head  list;
++	struct mlx5_fpga_client *client;
++	void *data;
++	bool added;
++};
++
++enum mlx5_fdev_state {
++	MLX5_FDEV_STATE_SUCCESS = 0,
++	MLX5_FDEV_STATE_FAILURE = 1,
++	MLX5_FDEV_STATE_IN_PROGRESS = 2,
++	MLX5_FDEV_STATE_DISCONNECTED = 3,
++	MLX5_FDEV_STATE_NONE = 0xFFFF,
++};
++
++enum {
++	MLX5_MKEY_MR = 1,
++	MLX5_MKEY_MW,
++	MLX5_MKEY_INDIRECT_DEVX,
++};
++
++struct mlx5_core_mkey {
++	u64			iova;
++	u64			size;
++	u32			key;
++	u32			pd;
++	u32			type;
++};
+ 
+ /* Represents an Innova device */
+ struct mlx5_fpga_device {
+ 	struct mlx5_core_dev *mdev;
++	struct completion load_event;
+ 	struct mlx5_nb fpga_err_nb;
+ 	struct mlx5_nb fpga_qp_err_nb;
+ 	spinlock_t state_lock; /* Protects state transitions */
+-	enum mlx5_fpga_status state;
++	enum mlx5_fdev_state fdev_state;
++	enum mlx5_fpga_status image_status;
+ 	enum mlx5_fpga_image last_admin_image;
+ 	enum mlx5_fpga_image last_oper_image;
+ 
+@@ -57,29 +90,41 @@ struct mlx5_fpga_device {
+ 		u32 mkey;
+ 		struct mlx5_uars_page *uar;
+ 	} conn_res;
++
++	struct mlx5_fpga_ipsec *ipsec;
++#ifdef HAVE_UAPI_LINUX_TLS_H
++	struct mlx5_fpga_tls *tls;
++#endif
++
++	struct list_head list;
++	struct list_head client_data_list;
++
++	/* Shell Transactions state */
++	struct mlx5_fpga_conn *shell_conn;
++	struct mlx5_fpga_trans_device_state *trans;
+ };
+ 
+ #define mlx5_fpga_dbg(__adev, format, ...) \
+-	mlx5_core_dbg((__adev)->mdev, "FPGA: %s:%d:(pid %d): " format, \
++	pr_err("FPGA: %s:%d:(pid %d): " format, \
+ 		       __func__, __LINE__, current->pid, ##__VA_ARGS__)
+ 
+ #define mlx5_fpga_err(__adev, format, ...) \
+-	mlx5_core_err((__adev)->mdev, "FPGA: %s:%d:(pid %d): " format, \
++	pr_err( "FPGA: %s:%d:(pid %d): " format, \
+ 		      __func__, __LINE__, current->pid, ##__VA_ARGS__)
+ 
+ #define mlx5_fpga_warn(__adev, format, ...) \
+-	mlx5_core_warn((__adev)->mdev, "FPGA: %s:%d:(pid %d): " format, \
++	pr_err( "FPGA: %s:%d:(pid %d): " format, \
+ 		       __func__, __LINE__, current->pid, ##__VA_ARGS__)
+ 
+ #define mlx5_fpga_warn_ratelimited(__adev, format, ...) \
+-	mlx5_core_err_rl((__adev)->mdev, "FPGA: %s:%d: " \
++	pr_err( "FPGA: %s:%d: " \
+ 			 format, __func__, __LINE__, ##__VA_ARGS__)
+ 
+ #define mlx5_fpga_notice(__adev, format, ...) \
+-	mlx5_core_info((__adev)->mdev, "FPGA: " format, ##__VA_ARGS__)
++	pr_err( "FPGA: " format, ##__VA_ARGS__)
+ 
+ #define mlx5_fpga_info(__adev, format, ...) \
+-	mlx5_core_info((__adev)->mdev, "FPGA: " format, ##__VA_ARGS__)
++	pr_err( "FPGA: " format, ##__VA_ARGS__)
+ 
+ int mlx5_fpga_init(struct mlx5_core_dev *mdev);
+ void mlx5_fpga_cleanup(struct mlx5_core_dev *mdev);
+@@ -90,6 +135,7 @@ void mlx5_fpga_device_stop(struct mlx5_core_dev *mdev);
+ 
+ static inline int mlx5_fpga_init(struct mlx5_core_dev *mdev)
+ {
++	pr_err("Call dummy FPGA init\n");
+ 	return 0;
+ }
+ 
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.c b/drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.c
+new file mode 100644
+index 0000000..53ac522
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.c
+@@ -0,0 +1,1589 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#include <linux/rhashtable.h>
++#include <linux/mlx5/driver.h>
++#include <linux/mlx5/fs_helpers.h>
++#include <linux/mlx5/fs.h>
++#include <linux/rbtree.h>
++
++#include "mlx5_core.h"
++#include "fs_cmd.h"
++#include "fpga/ipsec.h"
++#include "fpga/sdk.h"
++#include "fpga/core.h"
++
++enum mlx5_fpga_ipsec_cmd_status {
++	MLX5_FPGA_IPSEC_CMD_PENDING,
++	MLX5_FPGA_IPSEC_CMD_SEND_FAIL,
++	MLX5_FPGA_IPSEC_CMD_COMPLETE,
++};
++
++struct mlx5_fpga_ipsec_cmd_context {
++	struct mlx5_fpga_dma_buf buf;
++	enum mlx5_fpga_ipsec_cmd_status status;
++	struct mlx5_ifc_fpga_ipsec_cmd_resp resp;
++	int status_code;
++	struct completion complete;
++	struct mlx5_fpga_device *dev;
++	struct list_head list; /* Item in pending_cmds */
++	u8 command[];
++};
++
++struct mlx5_fpga_esp_xfrm;
++
++struct mlx5_fpga_ipsec_sa_ctx {
++	struct rhash_head		hash;
++	struct mlx5_ifc_fpga_ipsec_sa	hw_sa;
++	u32				sa_handle;
++	struct mlx5_core_dev		*dev;
++	struct mlx5_fpga_esp_xfrm	*fpga_xfrm;
++};
++
++struct mlx5_fpga_esp_xfrm {
++	unsigned int			num_rules;
++	struct mlx5_fpga_ipsec_sa_ctx	*sa_ctx;
++	struct mutex			lock; /* xfrm lock */
++	struct mlx5_accel_esp_xfrm	accel_xfrm;
++};
++
++struct mlx5_fpga_ipsec_rule {
++	struct rb_node			node;
++	struct fs_fte			*fte;
++	struct mlx5_fpga_ipsec_sa_ctx	*ctx;
++};
++
++static const struct rhashtable_params rhash_sa = {
++	/* Keep out "cmd" field from the key as it's
++	 * value is not constant during the lifetime
++	 * of the key object.
++	 */
++#ifndef FIELD_SIZEOF
++        .key_len = sizeof_field(struct mlx5_fpga_ipsec_sa_ctx, hw_sa) -
++                   sizeof_field(struct mlx5_ifc_fpga_ipsec_sa_v1, cmd),
++        .key_offset = offsetof(struct mlx5_fpga_ipsec_sa_ctx, hw_sa) +
++                      sizeof_field(struct mlx5_ifc_fpga_ipsec_sa_v1, cmd),
++#else
++        .key_len = FIELD_SIZEOF(struct mlx5_fpga_ipsec_sa_ctx, hw_sa) -
++                   FIELD_SIZEOF(struct mlx5_ifc_fpga_ipsec_sa_v1, cmd),
++        .key_offset = offsetof(struct mlx5_fpga_ipsec_sa_ctx, hw_sa) +
++                      FIELD_SIZEOF(struct mlx5_ifc_fpga_ipsec_sa_v1, cmd),
++#endif
++	.head_offset = offsetof(struct mlx5_fpga_ipsec_sa_ctx, hash),
++	.automatic_shrinking = true,
++	.min_size = 1,
++};
++
++struct mlx5_fpga_ipsec {
++	struct mlx5_fpga_device *fdev;
++	struct list_head pending_cmds;
++	spinlock_t pending_cmds_lock; /* Protects pending_cmds */
++	u32 caps[MLX5_ST_SZ_DW(ipsec_extended_cap)];
++	struct mlx5_fpga_conn *conn;
++
++	struct notifier_block	fs_notifier_ingress_bypass;
++	struct notifier_block	fs_notifier_egress;
++
++	/* Map hardware SA           -->  SA context
++	 *     (mlx5_fpga_ipsec_sa)       (mlx5_fpga_ipsec_sa_ctx)
++	 * We will use this hash to avoid SAs duplication in fpga which
++	 * aren't allowed
++	 */
++	struct rhashtable sa_hash;	/* hw_sa -> mlx5_fpga_ipsec_sa_ctx */
++	struct mutex sa_hash_lock;
++
++	/* Tree holding all rules for this fpga device
++	 * Key for searching a rule (mlx5_fpga_ipsec_rule) is (ft, id)
++	 */
++	struct rb_root rules_rb;
++	struct mutex rules_rb_lock; /* rules lock */
++
++	struct ida halloc;
++};
++
++bool mlx5_fpga_is_ipsec_device(struct mlx5_core_dev *mdev)
++{
++	if (!mdev->fpga || !MLX5_CAP_GEN(mdev, fpga))
++		return false;
++
++	if (MLX5_CAP_FPGA(mdev, ieee_vendor_id) !=
++	    MLX5_FPGA_CAP_SANDBOX_VENDOR_ID_MLNX)
++		return false;
++
++	if (MLX5_CAP_FPGA(mdev, sandbox_product_id) !=
++	    MLX5_FPGA_CAP_SANDBOX_PRODUCT_ID_IPSEC)
++		return false;
++
++	return true;
++}
++
++static void mlx5_fpga_ipsec_send_complete(struct mlx5_fpga_conn *conn,
++					  struct mlx5_fpga_device *fdev,
++					  struct mlx5_fpga_dma_buf *buf,
++					  u8 status)
++{
++	struct mlx5_fpga_ipsec_cmd_context *context;
++
++	if (status) {
++		context = container_of(buf, struct mlx5_fpga_ipsec_cmd_context,
++				       buf);
++		mlx5_fpga_warn(fdev, "IPSec command send failed with status %u\n",
++			       status);
++		context->status = MLX5_FPGA_IPSEC_CMD_SEND_FAIL;
++		complete(&context->complete);
++	}
++}
++
++static inline
++int syndrome_to_errno(enum mlx5_ifc_fpga_ipsec_response_syndrome syndrome)
++{
++	switch (syndrome) {
++	case MLX5_FPGA_IPSEC_RESPONSE_SUCCESS:
++		return 0;
++	case MLX5_FPGA_IPSEC_RESPONSE_SADB_ISSUE:
++		return -EEXIST;
++	case MLX5_FPGA_IPSEC_RESPONSE_ILLEGAL_REQUEST:
++		return -EINVAL;
++	case MLX5_FPGA_IPSEC_RESPONSE_WRITE_RESPONSE_ISSUE:
++		return -EIO;
++	}
++	return -EIO;
++}
++
++static void mlx5_fpga_ipsec_recv(void *cb_arg, struct mlx5_fpga_dma_buf *buf)
++{
++	struct mlx5_ifc_fpga_ipsec_cmd_resp *resp = buf->sg[0].data;
++	struct mlx5_fpga_ipsec_cmd_context *context;
++	enum mlx5_ifc_fpga_ipsec_response_syndrome syndrome;
++	struct mlx5_fpga_device *fdev = cb_arg;
++	unsigned long flags;
++
++	if (buf->sg[0].size < sizeof(*resp)) {
++		mlx5_fpga_warn(fdev, "Short receive from FPGA IPSec: %u < %zu bytes\n",
++			       buf->sg[0].size, sizeof(*resp));
++		return;
++	}
++
++	mlx5_fpga_dbg(fdev, "mlx5_ipsec recv_cb syndrome %08x\n",
++		      ntohl(resp->syndrome));
++
++	spin_lock_irqsave(&fdev->ipsec->pending_cmds_lock, flags);
++	context = list_first_entry_or_null(&fdev->ipsec->pending_cmds,
++					   struct mlx5_fpga_ipsec_cmd_context,
++					   list);
++	if (context)
++		list_del(&context->list);
++	spin_unlock_irqrestore(&fdev->ipsec->pending_cmds_lock, flags);
++
++	if (!context) {
++		mlx5_fpga_warn(fdev, "Received IPSec offload response without pending command request\n");
++		return;
++	}
++	mlx5_fpga_dbg(fdev, "Handling response for %p\n", context);
++
++	syndrome = ntohl(resp->syndrome);
++	context->status_code = syndrome_to_errno(syndrome);
++	context->status = MLX5_FPGA_IPSEC_CMD_COMPLETE;
++	memcpy(&context->resp, resp, sizeof(*resp));
++
++	if (context->status_code)
++		mlx5_fpga_warn(fdev, "IPSec command failed with syndrome %08x\n",
++			       syndrome);
++
++	complete(&context->complete);
++}
++
++static void *mlx5_fpga_ipsec_cmd_exec(struct mlx5_core_dev *mdev,
++				      const void *cmd, int cmd_size)
++{
++	struct mlx5_fpga_ipsec_cmd_context *context;
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++	unsigned long flags;
++	int res;
++
++	if (!fdev || !fdev->ipsec)
++		return ERR_PTR(-EOPNOTSUPP);
++
++	if (cmd_size & 3)
++		return ERR_PTR(-EINVAL);
++
++	context = kzalloc(sizeof(*context) + cmd_size, GFP_ATOMIC);
++	if (!context)
++		return ERR_PTR(-ENOMEM);
++
++	context->status = MLX5_FPGA_IPSEC_CMD_PENDING;
++	context->dev = fdev;
++	context->buf.complete = mlx5_fpga_ipsec_send_complete;
++	init_completion(&context->complete);
++	memcpy(&context->command, cmd, cmd_size);
++	context->buf.sg[0].size = cmd_size;
++	context->buf.sg[0].data = &context->command;
++
++	spin_lock_irqsave(&fdev->ipsec->pending_cmds_lock, flags);
++	res = mlx5_fpga_sbu_conn_sendmsg(fdev->ipsec->conn, &context->buf);
++	if (!res)
++		list_add_tail(&context->list, &fdev->ipsec->pending_cmds);
++	spin_unlock_irqrestore(&fdev->ipsec->pending_cmds_lock, flags);
++
++	if (res) {
++		mlx5_fpga_warn(fdev, "Failed to send IPSec command: %d\n", res);
++		kfree(context);
++		return ERR_PTR(res);
++	}
++
++	/* Context should be freed by the caller after completion. */
++	return context;
++}
++
++static int mlx5_fpga_ipsec_cmd_wait(void *ctx)
++{
++	struct mlx5_fpga_ipsec_cmd_context *context = ctx;
++	unsigned long timeout =
++		msecs_to_jiffies(MLX5_FPGA_CMD_TIMEOUT_MSEC);
++	int res;
++
++	res = wait_for_completion_timeout(&context->complete, timeout);
++	if (!res) {
++		mlx5_fpga_warn(context->dev, "Failure waiting for IPSec command response\n");
++		return -ETIMEDOUT;
++	}
++
++	if (context->status == MLX5_FPGA_IPSEC_CMD_COMPLETE)
++		res = context->status_code;
++	else
++		res = -EIO;
++
++	return res;
++}
++
++static inline bool is_v2_sadb_supported(struct mlx5_fpga_ipsec *fipsec)
++{
++	if (MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command))
++		return true;
++	return false;
++}
++
++static int mlx5_fpga_ipsec_update_hw_sa(struct mlx5_fpga_device *fdev,
++					struct mlx5_ifc_fpga_ipsec_sa *hw_sa,
++					int opcode)
++{
++	struct mlx5_core_dev *dev = fdev->mdev;
++	struct mlx5_ifc_fpga_ipsec_sa *sa;
++	struct mlx5_fpga_ipsec_cmd_context *cmd_context;
++	size_t sa_cmd_size;
++	int err;
++
++	hw_sa->ipsec_sa_v1.cmd = htonl(opcode);
++	if (is_v2_sadb_supported(fdev->ipsec))
++		sa_cmd_size = sizeof(*hw_sa);
++	else
++		sa_cmd_size = sizeof(hw_sa->ipsec_sa_v1);
++
++	cmd_context = (struct mlx5_fpga_ipsec_cmd_context *)
++			mlx5_fpga_ipsec_cmd_exec(dev, hw_sa, sa_cmd_size);
++	if (IS_ERR(cmd_context))
++		return PTR_ERR(cmd_context);
++
++	err = mlx5_fpga_ipsec_cmd_wait(cmd_context);
++	if (err)
++		goto out;
++
++	sa = (struct mlx5_ifc_fpga_ipsec_sa *)&cmd_context->command;
++	if (sa->ipsec_sa_v1.sw_sa_handle != cmd_context->resp.sw_sa_handle) {
++		mlx5_fpga_err(fdev, "mismatch SA handle. cmd 0x%08x vs resp 0x%08x\n",
++			      ntohl(sa->ipsec_sa_v1.sw_sa_handle),
++			      ntohl(cmd_context->resp.sw_sa_handle));
++		err = -EIO;
++	}
++
++out:
++	kfree(cmd_context);
++	return err;
++}
++
++u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
++{
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++	u32 ret = 0;
++
++	if (mlx5_fpga_is_ipsec_device(mdev)) {
++		ret |= MLX5_ACCEL_IPSEC_CAP_DEVICE;
++		ret |= MLX5_ACCEL_IPSEC_CAP_REQUIRED_METADATA;
++	} else {
++		return ret;
++	}
++
++	if (!fdev->ipsec)
++		return ret;
++
++	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esp))
++		ret |= MLX5_ACCEL_IPSEC_CAP_ESP;
++
++	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, ipv6))
++		ret |= MLX5_ACCEL_IPSEC_CAP_IPV6;
++
++	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, lso))
++		ret |= MLX5_ACCEL_IPSEC_CAP_LSO;
++
++	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, rx_no_trailer))
++		ret |= MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER;
++
++	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esn)) {
++		ret |= MLX5_ACCEL_IPSEC_CAP_ESN;
++		ret |= MLX5_ACCEL_IPSEC_CAP_TX_IV_IS_ESN;
++	}
++
++	return ret;
++}
++
++static unsigned int mlx5_fpga_ipsec_counters_count(struct mlx5_core_dev *mdev)
++{
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++
++	if (!fdev || !fdev->ipsec)
++		return 0;
++
++	return MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps,
++			number_of_ipsec_counters);
++}
++
++static int mlx5_fpga_ipsec_counters_read(struct mlx5_core_dev *mdev, u64 *counters,
++					 unsigned int counters_count)
++{
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++	unsigned int i;
++	__be32 *data;
++	u32 count;
++	u64 addr;
++	int ret;
++
++	if (!fdev || !fdev->ipsec)
++		return 0;
++
++	addr = (u64)MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps,
++			     ipsec_counters_addr_low) +
++	       ((u64)MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps,
++			     ipsec_counters_addr_high) << 32);
++
++	count = mlx5_fpga_ipsec_counters_count(mdev);
++
++	data = kzalloc(array3_size(sizeof(*data), count, 2), GFP_KERNEL);
++	if (!data) {
++		ret = -ENOMEM;
++		goto out;
++	}
++
++	ret = mlx5_fpga_mem_read(fdev, count * sizeof(u64), addr, data,
++				 MLX5_FPGA_ACCESS_TYPE_DONTCARE);
++	if (ret < 0) {
++		mlx5_fpga_err(fdev, "Failed to read IPSec counters from HW: %d\n",
++			      ret);
++		goto out;
++	}
++	ret = 0;
++
++	if (count > counters_count)
++		count = counters_count;
++
++	/* Each counter is low word, then high. But each word is big-endian */
++	for (i = 0; i < count; i++)
++		counters[i] = (u64)ntohl(data[i * 2]) |
++			      ((u64)ntohl(data[i * 2 + 1]) << 32);
++
++out:
++	kfree(data);
++	return ret;
++}
++
++static int mlx5_fpga_ipsec_set_caps(struct mlx5_core_dev *mdev, u32 flags)
++{
++	struct mlx5_fpga_ipsec_cmd_context *context;
++	struct mlx5_ifc_fpga_ipsec_cmd_cap cmd = {0};
++	int err;
++
++	cmd.cmd = htonl(MLX5_FPGA_IPSEC_CMD_OP_SET_CAP);
++	cmd.flags = htonl(flags);
++	context = mlx5_fpga_ipsec_cmd_exec(mdev, &cmd, sizeof(cmd));
++	if (IS_ERR(context))
++		return PTR_ERR(context);
++
++	err = mlx5_fpga_ipsec_cmd_wait(context);
++	if (err)
++		goto out;
++
++	if ((context->resp.flags & cmd.flags) != cmd.flags) {
++		mlx5_fpga_err(context->dev, "Failed to set capabilities. cmd 0x%08x vs resp 0x%08x\n",
++			      cmd.flags,
++			      context->resp.flags);
++		err = -EIO;
++	}
++
++out:
++	kfree(context);
++	return err;
++}
++
++static int mlx5_fpga_ipsec_enable_supported_caps(struct mlx5_core_dev *mdev)
++{
++	u32 dev_caps = mlx5_fpga_ipsec_device_caps(mdev);
++	u32 flags = 0;
++
++	if (dev_caps & MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER)
++		flags |= MLX5_FPGA_IPSEC_CAP_NO_TRAILER;
++
++	return mlx5_fpga_ipsec_set_caps(mdev, flags);
++}
++
++static void
++mlx5_fpga_ipsec_build_hw_xfrm(struct mlx5_core_dev *mdev,
++			      const struct mlx5_accel_esp_xfrm_attrs *xfrm_attrs,
++			      struct mlx5_ifc_fpga_ipsec_sa *hw_sa)
++{
++	const struct aes_gcm_keymat *aes_gcm = &xfrm_attrs->keymat.aes_gcm;
++
++	/* key */
++	memcpy(&hw_sa->ipsec_sa_v1.key_enc, aes_gcm->aes_key,
++	       aes_gcm->key_len / 8);
++	/* Duplicate 128 bit key twice according to HW layout */
++	if (aes_gcm->key_len == 128)
++		memcpy(&hw_sa->ipsec_sa_v1.key_enc[16],
++		       aes_gcm->aes_key, aes_gcm->key_len / 8);
++
++	/* salt and seq_iv */
++	memcpy(&hw_sa->ipsec_sa_v1.gcm.salt_iv, &aes_gcm->seq_iv,
++	       sizeof(aes_gcm->seq_iv));
++	memcpy(&hw_sa->ipsec_sa_v1.gcm.salt, &aes_gcm->salt,
++	       sizeof(aes_gcm->salt));
++
++	/* esn */
++	if (xfrm_attrs->flags & MLX5_ACCEL_ESP_FLAGS_ESN_TRIGGERED) {
++		hw_sa->ipsec_sa_v1.flags |= MLX5_FPGA_IPSEC_SA_ESN_EN;
++		hw_sa->ipsec_sa_v1.flags |=
++				(xfrm_attrs->flags &
++				 MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP) ?
++					MLX5_FPGA_IPSEC_SA_ESN_OVERLAP : 0;
++		hw_sa->esn = htonl(xfrm_attrs->esn);
++	} else {
++		hw_sa->ipsec_sa_v1.flags &= ~MLX5_FPGA_IPSEC_SA_ESN_EN;
++		hw_sa->ipsec_sa_v1.flags &=
++				~(xfrm_attrs->flags &
++				  MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP) ?
++					MLX5_FPGA_IPSEC_SA_ESN_OVERLAP : 0;
++		hw_sa->esn = 0;
++	}
++
++	/* rx handle */
++	hw_sa->ipsec_sa_v1.sw_sa_handle = htonl(xfrm_attrs->sa_handle);
++
++	/* enc mode */
++	switch (aes_gcm->key_len) {
++	case 128:
++		hw_sa->ipsec_sa_v1.enc_mode =
++			MLX5_FPGA_IPSEC_SA_ENC_MODE_AES_GCM_128_AUTH_128;
++		break;
++	case 256:
++		hw_sa->ipsec_sa_v1.enc_mode =
++			MLX5_FPGA_IPSEC_SA_ENC_MODE_AES_GCM_256_AUTH_128;
++		break;
++	}
++
++	/* flags */
++	hw_sa->ipsec_sa_v1.flags |= MLX5_FPGA_IPSEC_SA_SA_VALID |
++			MLX5_FPGA_IPSEC_SA_SPI_EN |
++			MLX5_FPGA_IPSEC_SA_IP_ESP;
++
++	if (xfrm_attrs->action & MLX5_ACCEL_ESP_ACTION_ENCRYPT)
++		hw_sa->ipsec_sa_v1.flags |= MLX5_FPGA_IPSEC_SA_DIR_SX;
++	else
++		hw_sa->ipsec_sa_v1.flags &= ~MLX5_FPGA_IPSEC_SA_DIR_SX;
++}
++
++static void
++mlx5_fpga_ipsec_build_hw_sa(struct mlx5_core_dev *mdev,
++			    struct mlx5_accel_esp_xfrm_attrs *xfrm_attrs,
++			    const __be32 saddr[4],
++			    const __be32 daddr[4],
++			    const __be32 spi, bool is_ipv6,
++			    struct mlx5_ifc_fpga_ipsec_sa *hw_sa)
++{
++	mlx5_fpga_ipsec_build_hw_xfrm(mdev, xfrm_attrs, hw_sa);
++
++	/* IPs */
++	memcpy(hw_sa->ipsec_sa_v1.sip, saddr, sizeof(hw_sa->ipsec_sa_v1.sip));
++	memcpy(hw_sa->ipsec_sa_v1.dip, daddr, sizeof(hw_sa->ipsec_sa_v1.dip));
++
++	/* SPI */
++	hw_sa->ipsec_sa_v1.spi = spi;
++
++	/* flags */
++	if (is_ipv6)
++		hw_sa->ipsec_sa_v1.flags |= MLX5_FPGA_IPSEC_SA_IPV6;
++}
++
++static bool is_full_mask(const void *p, size_t len)
++{
++	WARN_ON(len % 4);
++
++	return !memchr_inv(p, 0xff, len);
++}
++
++static bool validate_fpga_full_mask(struct mlx5_core_dev *dev,
++				    const u32 *match_c,
++				    const u32 *match_v)
++{
++	const void *misc_params_c = MLX5_ADDR_OF(fte_match_param,
++						 match_c,
++						 misc_parameters);
++	const void *headers_c = MLX5_ADDR_OF(fte_match_param,
++					     match_c,
++					     outer_headers);
++	const void *headers_v = MLX5_ADDR_OF(fte_match_param,
++					     match_v,
++					     outer_headers);
++
++	if (mlx5_fs_is_outer_ipv4_flow(dev, headers_c, headers_v)) {
++		const void *s_ipv4_c = MLX5_ADDR_OF(fte_match_set_lyr_2_4,
++						    headers_c,
++						    src_ipv4_src_ipv6.ipv4_layout.ipv4);
++		const void *d_ipv4_c = MLX5_ADDR_OF(fte_match_set_lyr_2_4,
++						    headers_c,
++						    dst_ipv4_dst_ipv6.ipv4_layout.ipv4);
++
++		if (!is_full_mask(s_ipv4_c, MLX5_FLD_SZ_BYTES(ipv4_layout,
++							      ipv4)) ||
++		    !is_full_mask(d_ipv4_c, MLX5_FLD_SZ_BYTES(ipv4_layout,
++							      ipv4)))
++			return false;
++	} else {
++		const void *s_ipv6_c = MLX5_ADDR_OF(fte_match_set_lyr_2_4,
++						    headers_c,
++						    src_ipv4_src_ipv6.ipv6_layout.ipv6);
++		const void *d_ipv6_c = MLX5_ADDR_OF(fte_match_set_lyr_2_4,
++						    headers_c,
++						    dst_ipv4_dst_ipv6.ipv6_layout.ipv6);
++
++		if (!is_full_mask(s_ipv6_c, MLX5_FLD_SZ_BYTES(ipv6_layout,
++							      ipv6)) ||
++		    !is_full_mask(d_ipv6_c, MLX5_FLD_SZ_BYTES(ipv6_layout,
++							      ipv6)))
++			return false;
++	}
++
++	if (!is_full_mask(MLX5_ADDR_OF(fte_match_set_misc, misc_params_c,
++				       outer_esp_spi),
++			  MLX5_FLD_SZ_BYTES(fte_match_set_misc, outer_esp_spi)))
++		return false;
++
++	return true;
++}
++
++static bool mlx5_is_fpga_ipsec_rule(struct mlx5_core_dev *dev,
++				    u8 match_criteria_enable,
++				    const u32 *match_c,
++				    const u32 *match_v)
++{
++	u32 ipsec_dev_caps = mlx5_fpga_ipsec_device_caps(dev);
++	bool ipv6_flow;
++
++	ipv6_flow = mlx5_fs_is_outer_ipv6_flow(dev, match_c, match_v);
++
++	if (!(match_criteria_enable & MLX5_MATCH_OUTER_HEADERS) ||
++	    mlx5_fs_is_outer_udp_flow(match_c, match_v) ||
++	    mlx5_fs_is_outer_tcp_flow(match_c, match_v) ||
++	    mlx5_fs_is_vxlan_flow(match_c) ||
++	    !(mlx5_fs_is_outer_ipv4_flow(dev, match_c, match_v) ||
++	      ipv6_flow))
++		return false;
++
++	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_CAP_DEVICE))
++		return false;
++
++	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_CAP_ESP) &&
++	    mlx5_fs_is_outer_ipsec_flow(match_c))
++		return false;
++
++	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_CAP_IPV6) &&
++	    ipv6_flow)
++		return false;
++
++	if (!validate_fpga_full_mask(dev, match_c, match_v))
++		return false;
++
++	return true;
++}
++
++static bool mlx5_is_fpga_egress_ipsec_rule(struct mlx5_core_dev *dev,
++					   u8 match_criteria_enable,
++					   const u32 *match_c,
++					   const u32 *match_v,
++					   struct mlx5_flow_act *flow_act,
++					   struct mlx5_flow_context *flow_context)
++{
++	const void *outer_c = MLX5_ADDR_OF(fte_match_param, match_c,
++					   outer_headers);
++	bool is_dmac = MLX5_GET(fte_match_set_lyr_2_4, outer_c, dmac_47_16) ||
++			MLX5_GET(fte_match_set_lyr_2_4, outer_c, dmac_15_0);
++	bool is_smac = MLX5_GET(fte_match_set_lyr_2_4, outer_c, smac_47_16) ||
++			MLX5_GET(fte_match_set_lyr_2_4, outer_c, smac_15_0);
++	int ret;
++
++	ret = mlx5_is_fpga_ipsec_rule(dev, match_criteria_enable, match_c,
++				      match_v);
++	if (!ret)
++		return ret;
++
++	if (is_dmac || is_smac ||
++	    (match_criteria_enable &
++	     ~(MLX5_MATCH_OUTER_HEADERS | MLX5_MATCH_MISC_PARAMETERS)) ||
++	    (flow_act->action & ~(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT | MLX5_FLOW_CONTEXT_ACTION_ALLOW)) ||
++	     (flow_context->flags & FLOW_CONTEXT_HAS_TAG))
++		return false;
++
++	return true;
++}
++
++static void *mlx5_fpga_ipsec_create_sa_ctx(struct mlx5_core_dev *mdev,
++					   struct mlx5_accel_esp_xfrm *accel_xfrm,
++					   const __be32 saddr[4], const __be32 daddr[4],
++					   const __be32 spi, bool is_ipv6, u32 pdn,
++					   u32 *sa_handle)
++{
++	struct mlx5_fpga_ipsec_sa_ctx *sa_ctx;
++	struct mlx5_fpga_esp_xfrm *fpga_xfrm =
++			container_of(accel_xfrm, typeof(*fpga_xfrm),
++				     accel_xfrm);
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++	struct mlx5_fpga_ipsec *fipsec = fdev->ipsec;
++	int opcode, err;
++	void *context;
++
++	/* alloc SA */
++	sa_ctx = kzalloc(sizeof(*sa_ctx), GFP_KERNEL);
++	if (!sa_ctx)
++		return ERR_PTR(-ENOMEM);
++
++	sa_ctx->dev = mdev;
++
++	/* build candidate SA */
++	mlx5_fpga_ipsec_build_hw_sa(mdev, &accel_xfrm->attrs,
++				    saddr, daddr, spi, is_ipv6,
++				    &sa_ctx->hw_sa);
++
++	mutex_lock(&fpga_xfrm->lock);
++
++	if (fpga_xfrm->sa_ctx) {        /* multiple rules for same accel_xfrm */
++		/* all rules must be with same IPs and SPI */
++		if (memcmp(&sa_ctx->hw_sa, &fpga_xfrm->sa_ctx->hw_sa,
++			   sizeof(sa_ctx->hw_sa))) {
++			context = ERR_PTR(-EINVAL);
++			goto exists;
++		}
++
++		++fpga_xfrm->num_rules;
++		context = fpga_xfrm->sa_ctx;
++		goto exists;
++	}
++
++	if (accel_xfrm->attrs.action == MLX5_ACCEL_ESP_ACTION_DECRYPT) {
++		err = ida_simple_get(&fipsec->halloc, 1, 0, GFP_KERNEL);
++		if (err < 0) {
++			context = ERR_PTR(err);
++			goto exists;
++		}
++
++		sa_ctx->sa_handle = err;
++		if (sa_handle)
++			*sa_handle = sa_ctx->sa_handle;
++	}
++	/* This is unbounded fpga_xfrm, try to add to hash */
++	mutex_lock(&fipsec->sa_hash_lock);
++
++	err = rhashtable_lookup_insert_fast(&fipsec->sa_hash, &sa_ctx->hash,
++					    rhash_sa);
++	if (err) {
++		/* Can't bound different accel_xfrm to already existing sa_ctx.
++		 * This is because we can't support multiple ketmats for
++		 * same IPs and SPI
++		 */
++		context = ERR_PTR(-EEXIST);
++		goto unlock_hash;
++	}
++
++	/* Bound accel_xfrm to sa_ctx */
++	opcode = is_v2_sadb_supported(fdev->ipsec) ?
++			MLX5_FPGA_IPSEC_CMD_OP_ADD_SA_V2 :
++			MLX5_FPGA_IPSEC_CMD_OP_ADD_SA;
++	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &sa_ctx->hw_sa, opcode);
++	sa_ctx->hw_sa.ipsec_sa_v1.cmd = 0;
++	if (err) {
++		context = ERR_PTR(err);
++		goto delete_hash;
++	}
++
++	mutex_unlock(&fipsec->sa_hash_lock);
++
++	++fpga_xfrm->num_rules;
++	fpga_xfrm->sa_ctx = sa_ctx;
++	sa_ctx->fpga_xfrm = fpga_xfrm;
++
++	mutex_unlock(&fpga_xfrm->lock);
++
++	return sa_ctx;
++
++delete_hash:
++	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash, &sa_ctx->hash,
++				       rhash_sa));
++unlock_hash:
++	mutex_unlock(&fipsec->sa_hash_lock);
++	if (accel_xfrm->attrs.action == MLX5_ACCEL_ESP_ACTION_DECRYPT)
++		ida_simple_remove(&fipsec->halloc, sa_ctx->sa_handle);
++exists:
++	mutex_unlock(&fpga_xfrm->lock);
++	kfree(sa_ctx);
++	return context;
++}
++
++static void *
++mlx5_fpga_ipsec_fs_create_sa_ctx(struct mlx5_core_dev *mdev,
++				 struct fs_fte *fte,
++				 bool is_egress)
++{
++	struct mlx5_accel_esp_xfrm *accel_xfrm;
++	__be32 saddr[4], daddr[4], spi;
++	struct mlx5_flow_group *fg;
++	bool is_ipv6 = false;
++
++	fs_get_obj(fg, fte->node.parent);
++	/* validate */
++	if (is_egress &&
++	    !mlx5_is_fpga_egress_ipsec_rule(mdev,
++					    fg->mask.match_criteria_enable,
++					    fg->mask.match_criteria,
++					    fte->val,
++					    &fte->action,
++					    &fte->flow_context))
++		return ERR_PTR(-EINVAL);
++	else if (!mlx5_is_fpga_ipsec_rule(mdev,
++					  fg->mask.match_criteria_enable,
++					  fg->mask.match_criteria,
++					  fte->val))
++		return ERR_PTR(-EINVAL);
++
++	/* get xfrm context */
++	accel_xfrm =
++		(struct mlx5_accel_esp_xfrm *)fte->action.esp_id;
++
++	/* IPs */
++	if (mlx5_fs_is_outer_ipv4_flow(mdev, fg->mask.match_criteria,
++				       fte->val)) {
++		memcpy(&saddr[3],
++		       MLX5_ADDR_OF(fte_match_set_lyr_2_4,
++				    fte->val,
++				    src_ipv4_src_ipv6.ipv4_layout.ipv4),
++				    sizeof(saddr[3]));
++		memcpy(&daddr[3],
++		       MLX5_ADDR_OF(fte_match_set_lyr_2_4,
++				    fte->val,
++				    dst_ipv4_dst_ipv6.ipv4_layout.ipv4),
++				    sizeof(daddr[3]));
++	} else {
++		memcpy(saddr,
++		       MLX5_ADDR_OF(fte_match_param,
++				    fte->val,
++				    outer_headers.src_ipv4_src_ipv6.ipv6_layout.ipv6),
++				    sizeof(saddr));
++		memcpy(daddr,
++		       MLX5_ADDR_OF(fte_match_param,
++				    fte->val,
++				    outer_headers.dst_ipv4_dst_ipv6.ipv6_layout.ipv6),
++				    sizeof(daddr));
++		is_ipv6 = true;
++	}
++
++	/* SPI */
++	spi = MLX5_GET_BE(typeof(spi),
++			  fte_match_param, fte->val,
++			  misc_parameters.outer_esp_spi);
++
++	/* create */
++	return mlx5_fpga_ipsec_create_sa_ctx(mdev, accel_xfrm,
++					     saddr, daddr,
++					     spi, is_ipv6, 0, NULL);
++}
++
++static void
++mlx5_fpga_ipsec_release_sa_ctx(struct mlx5_fpga_ipsec_sa_ctx *sa_ctx)
++{
++	struct mlx5_fpga_device *fdev = sa_ctx->dev->fpga;
++	struct mlx5_fpga_ipsec *fipsec = fdev->ipsec;
++	int opcode = is_v2_sadb_supported(fdev->ipsec) ?
++			MLX5_FPGA_IPSEC_CMD_OP_DEL_SA_V2 :
++			MLX5_FPGA_IPSEC_CMD_OP_DEL_SA;
++	int err;
++
++	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &sa_ctx->hw_sa, opcode);
++	sa_ctx->hw_sa.ipsec_sa_v1.cmd = 0;
++	if (err) {
++		WARN_ON(err);
++		return;
++	}
++
++	if (sa_ctx->fpga_xfrm->accel_xfrm.attrs.action &
++	    MLX5_ACCEL_ESP_ACTION_DECRYPT)
++		ida_simple_remove(&fipsec->halloc, sa_ctx->sa_handle);
++
++	mutex_lock(&fipsec->sa_hash_lock);
++	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash, &sa_ctx->hash,
++				       rhash_sa));
++	mutex_unlock(&fipsec->sa_hash_lock);
++}
++
++static void mlx5_fpga_ipsec_delete_sa_ctx(void *context)
++{
++	struct mlx5_fpga_esp_xfrm *fpga_xfrm =
++			((struct mlx5_fpga_ipsec_sa_ctx *)context)->fpga_xfrm;
++
++	mutex_lock(&fpga_xfrm->lock);
++	if (!--fpga_xfrm->num_rules) {
++		mlx5_fpga_ipsec_release_sa_ctx(fpga_xfrm->sa_ctx);
++		kfree(fpga_xfrm->sa_ctx);
++		fpga_xfrm->sa_ctx = NULL;
++	}
++	mutex_unlock(&fpga_xfrm->lock);
++}
++
++static inline struct mlx5_fpga_ipsec_rule *
++_rule_search(struct rb_root *root, struct fs_fte *fte)
++{
++	struct rb_node *node = root->rb_node;
++
++	while (node) {
++		struct mlx5_fpga_ipsec_rule *rule =
++				container_of(node, struct mlx5_fpga_ipsec_rule,
++					     node);
++
++		if (rule->fte < fte)
++			node = node->rb_left;
++		else if (rule->fte > fte)
++			node = node->rb_right;
++		else
++			return rule;
++	}
++	return NULL;
++}
++
++static struct mlx5_fpga_ipsec_rule *
++rule_search(struct mlx5_fpga_ipsec *ipsec_dev, struct fs_fte *fte)
++{
++	struct mlx5_fpga_ipsec_rule *rule;
++
++	mutex_lock(&ipsec_dev->rules_rb_lock);
++	rule = _rule_search(&ipsec_dev->rules_rb, fte);
++	mutex_unlock(&ipsec_dev->rules_rb_lock);
++
++	return rule;
++}
++
++static inline int _rule_insert(struct rb_root *root,
++			       struct mlx5_fpga_ipsec_rule *rule)
++{
++	struct rb_node **new = &root->rb_node, *parent = NULL;
++
++	/* Figure out where to put new node */
++	while (*new) {
++		struct mlx5_fpga_ipsec_rule *this =
++				container_of(*new, struct mlx5_fpga_ipsec_rule,
++					     node);
++
++		parent = *new;
++		if (rule->fte < this->fte)
++			new = &((*new)->rb_left);
++		else if (rule->fte > this->fte)
++			new = &((*new)->rb_right);
++		else
++			return -EEXIST;
++	}
++
++	/* Add new node and rebalance tree. */
++	rb_link_node(&rule->node, parent, new);
++	rb_insert_color(&rule->node, root);
++
++	return 0;
++}
++
++static int rule_insert(struct mlx5_fpga_ipsec *ipsec_dev,
++		       struct mlx5_fpga_ipsec_rule *rule)
++{
++	int ret;
++
++	mutex_lock(&ipsec_dev->rules_rb_lock);
++	ret = _rule_insert(&ipsec_dev->rules_rb, rule);
++	mutex_unlock(&ipsec_dev->rules_rb_lock);
++
++	return ret;
++}
++
++static inline void _rule_delete(struct mlx5_fpga_ipsec *ipsec_dev,
++				struct mlx5_fpga_ipsec_rule *rule)
++{
++	struct rb_root *root = &ipsec_dev->rules_rb;
++
++	mutex_lock(&ipsec_dev->rules_rb_lock);
++	rb_erase(&rule->node, root);
++	mutex_unlock(&ipsec_dev->rules_rb_lock);
++}
++
++static void rule_delete(struct mlx5_fpga_ipsec *ipsec_dev,
++			struct mlx5_fpga_ipsec_rule *rule)
++{
++	_rule_delete(ipsec_dev, rule);
++	kfree(rule);
++}
++
++struct mailbox_mod {
++	uintptr_t			saved_esp_id;
++	u32				saved_action;
++	u32				saved_outer_esp_spi_value;
++};
++
++static void restore_spec_mailbox(struct fs_fte *fte,
++				 struct mailbox_mod *mbox_mod)
++{
++	char *misc_params_v = MLX5_ADDR_OF(fte_match_param,
++					   fte->val,
++					   misc_parameters);
++
++	MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi,
++		 mbox_mod->saved_outer_esp_spi_value);
++	fte->action.action |= mbox_mod->saved_action;
++	fte->action.esp_id = (uintptr_t)mbox_mod->saved_esp_id;
++}
++
++static void modify_spec_mailbox(struct mlx5_core_dev *mdev,
++				struct fs_fte *fte,
++				struct mailbox_mod *mbox_mod)
++{
++	char *misc_params_v = MLX5_ADDR_OF(fte_match_param,
++					   fte->val,
++					   misc_parameters);
++
++	mbox_mod->saved_esp_id = fte->action.esp_id;
++	mbox_mod->saved_action = fte->action.action &
++			(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
++			 MLX5_FLOW_CONTEXT_ACTION_DECRYPT);
++	mbox_mod->saved_outer_esp_spi_value =
++			MLX5_GET(fte_match_set_misc, misc_params_v,
++				 outer_esp_spi);
++
++	fte->action.esp_id = 0;
++	fte->action.action &= ~(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
++				MLX5_FLOW_CONTEXT_ACTION_DECRYPT);
++	if (!MLX5_CAP_FLOWTABLE(mdev,
++				flow_table_properties_nic_receive.ft_field_support.outer_esp_spi))
++		MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi, 0);
++}
++
++static enum fs_flow_table_type egress_to_fs_ft(bool egress)
++{
++	return egress ? FS_FT_NIC_TX : FS_FT_NIC_RX;
++}
++
++static int fpga_ipsec_fs_create_flow_group(struct mlx5_flow_root_namespace *ns,
++					   struct mlx5_flow_table *ft,
++					   u32 *in,
++					   struct mlx5_flow_group *fg,
++					   bool is_egress)
++{
++	int (*create_flow_group)(struct mlx5_flow_root_namespace *ns,
++				 struct mlx5_flow_table *ft, u32 *in,
++				 struct mlx5_flow_group *fg) =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(is_egress))->create_flow_group;
++	char *misc_params_c = MLX5_ADDR_OF(create_flow_group_in, in,
++					   match_criteria.misc_parameters);
++	struct mlx5_core_dev *dev = ns->dev;
++	u32 saved_outer_esp_spi_mask;
++	u8 match_criteria_enable;
++	int ret;
++
++	if (MLX5_CAP_FLOWTABLE(dev,
++			       flow_table_properties_nic_receive.ft_field_support.outer_esp_spi))
++		return create_flow_group(ns, ft, in, fg);
++
++	match_criteria_enable =
++		MLX5_GET(create_flow_group_in, in, match_criteria_enable);
++	saved_outer_esp_spi_mask =
++		MLX5_GET(fte_match_set_misc, misc_params_c, outer_esp_spi);
++	if (!match_criteria_enable || !saved_outer_esp_spi_mask)
++		return create_flow_group(ns, ft, in, fg);
++
++	MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi, 0);
++
++	if (!(*misc_params_c) &&
++	    !memcmp(misc_params_c, misc_params_c + 1, MLX5_ST_SZ_BYTES(fte_match_set_misc) - 1))
++		MLX5_SET(create_flow_group_in, in, match_criteria_enable,
++			 match_criteria_enable & ~MLX5_MATCH_MISC_PARAMETERS);
++
++	ret = create_flow_group(ns, ft, in, fg);
++
++	MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi, saved_outer_esp_spi_mask);
++	MLX5_SET(create_flow_group_in, in, match_criteria_enable, match_criteria_enable);
++
++	return ret;
++}
++
++static int fpga_ipsec_fs_create_fte(struct mlx5_flow_root_namespace *ns,
++				    struct mlx5_flow_table *ft,
++				    struct mlx5_flow_group *fg,
++				    struct fs_fte *fte,
++				    bool is_egress)
++{
++	int (*create_fte)(struct mlx5_flow_root_namespace *ns,
++			  struct mlx5_flow_table *ft,
++			  struct mlx5_flow_group *fg,
++			  struct fs_fte *fte) =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(is_egress))->create_fte;
++	struct mlx5_core_dev *dev = ns->dev;
++	struct mlx5_fpga_device *fdev = dev->fpga;
++	struct mlx5_fpga_ipsec *fipsec = fdev->ipsec;
++	struct mlx5_fpga_ipsec_rule *rule;
++	bool is_esp = fte->action.esp_id;
++	struct mailbox_mod mbox_mod;
++	int ret;
++
++	if (!is_esp ||
++	    !(fte->action.action &
++	      (MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
++	       MLX5_FLOW_CONTEXT_ACTION_DECRYPT)))
++		return create_fte(ns, ft, fg, fte);
++
++	rule = kzalloc(sizeof(*rule), GFP_KERNEL);
++	if (!rule)
++		return -ENOMEM;
++
++	rule->ctx = mlx5_fpga_ipsec_fs_create_sa_ctx(dev, fte, is_egress);
++	if (IS_ERR(rule->ctx)) {
++		int err = PTR_ERR(rule->ctx);
++		kfree(rule);
++		return err;
++	}
++
++	rule->fte = fte;
++	WARN_ON(rule_insert(fipsec, rule));
++
++	modify_spec_mailbox(dev, fte, &mbox_mod);
++	ret = create_fte(ns, ft, fg, fte);
++	restore_spec_mailbox(fte, &mbox_mod);
++	if (ret) {
++		_rule_delete(fipsec, rule);
++		mlx5_fpga_ipsec_delete_sa_ctx(rule->ctx);
++		kfree(rule);
++	}
++
++	return ret;
++}
++
++static int fpga_ipsec_fs_update_fte(struct mlx5_flow_root_namespace *ns,
++				    struct mlx5_flow_table *ft,
++				    struct mlx5_flow_group *fg,
++				    int modify_mask,
++				    struct fs_fte *fte,
++				    bool is_egress)
++{
++	int (*update_fte)(struct mlx5_flow_root_namespace *ns,
++			  struct mlx5_flow_table *ft,
++			  struct mlx5_flow_group *fg,
++			  int modify_mask,
++			  struct fs_fte *fte) =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(is_egress))->update_fte;
++	struct mlx5_core_dev *dev = ns->dev;
++	bool is_esp = fte->action.esp_id;
++	struct mailbox_mod mbox_mod;
++	int ret;
++
++	if (!is_esp ||
++	    !(fte->action.action &
++	      (MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
++	       MLX5_FLOW_CONTEXT_ACTION_DECRYPT)))
++		return update_fte(ns, ft, fg, modify_mask, fte);
++
++	modify_spec_mailbox(dev, fte, &mbox_mod);
++	ret = update_fte(ns, ft, fg, modify_mask, fte);
++	restore_spec_mailbox(fte, &mbox_mod);
++
++	return ret;
++}
++
++static int fpga_ipsec_fs_delete_fte(struct mlx5_flow_root_namespace *ns,
++				    struct mlx5_flow_table *ft,
++				    struct fs_fte *fte,
++				    bool is_egress)
++{
++	int (*delete_fte)(struct mlx5_flow_root_namespace *ns,
++			  struct mlx5_flow_table *ft,
++			  struct fs_fte *fte) =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(is_egress))->delete_fte;
++	struct mlx5_core_dev *dev = ns->dev;
++	struct mlx5_fpga_device *fdev = dev->fpga;
++	struct mlx5_fpga_ipsec *fipsec = fdev->ipsec;
++	struct mlx5_fpga_ipsec_rule *rule;
++	bool is_esp = fte->action.esp_id;
++	struct mailbox_mod mbox_mod;
++	int ret;
++
++	if (!is_esp ||
++	    !(fte->action.action &
++	      (MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
++	       MLX5_FLOW_CONTEXT_ACTION_DECRYPT)))
++		return delete_fte(ns, ft, fte);
++
++	rule = rule_search(fipsec, fte);
++	if (!rule)
++		return -ENOENT;
++
++	mlx5_fpga_ipsec_delete_sa_ctx(rule->ctx);
++	rule_delete(fipsec, rule);
++
++	modify_spec_mailbox(dev, fte, &mbox_mod);
++	ret = delete_fte(ns, ft, fte);
++	restore_spec_mailbox(fte, &mbox_mod);
++
++	return ret;
++}
++
++static int
++mlx5_fpga_ipsec_fs_create_flow_group_egress(struct mlx5_flow_root_namespace *ns,
++					    struct mlx5_flow_table *ft,
++					    u32 *in,
++					    struct mlx5_flow_group *fg)
++{
++	return fpga_ipsec_fs_create_flow_group(ns, ft, in, fg, true);
++}
++
++static int
++mlx5_fpga_ipsec_fs_create_fte_egress(struct mlx5_flow_root_namespace *ns,
++				     struct mlx5_flow_table *ft,
++				     struct mlx5_flow_group *fg,
++				     struct fs_fte *fte)
++{
++	return fpga_ipsec_fs_create_fte(ns, ft, fg, fte, true);
++}
++
++static int
++mlx5_fpga_ipsec_fs_update_fte_egress(struct mlx5_flow_root_namespace *ns,
++				     struct mlx5_flow_table *ft,
++				     struct mlx5_flow_group *fg,
++				     int modify_mask,
++				     struct fs_fte *fte)
++{
++	return fpga_ipsec_fs_update_fte(ns, ft, fg, modify_mask, fte,
++					true);
++}
++
++static int
++mlx5_fpga_ipsec_fs_delete_fte_egress(struct mlx5_flow_root_namespace *ns,
++				     struct mlx5_flow_table *ft,
++				     struct fs_fte *fte)
++{
++	return fpga_ipsec_fs_delete_fte(ns, ft, fte, true);
++}
++
++static int
++mlx5_fpga_ipsec_fs_create_flow_group_ingress(struct mlx5_flow_root_namespace *ns,
++					     struct mlx5_flow_table *ft,
++					     u32 *in,
++					     struct mlx5_flow_group *fg)
++{
++	return fpga_ipsec_fs_create_flow_group(ns, ft, in, fg, false);
++}
++
++static int
++mlx5_fpga_ipsec_fs_create_fte_ingress(struct mlx5_flow_root_namespace *ns,
++				      struct mlx5_flow_table *ft,
++				      struct mlx5_flow_group *fg,
++				      struct fs_fte *fte)
++{
++	return fpga_ipsec_fs_create_fte(ns, ft, fg, fte, false);
++}
++
++static int
++mlx5_fpga_ipsec_fs_update_fte_ingress(struct mlx5_flow_root_namespace *ns,
++				      struct mlx5_flow_table *ft,
++				      struct mlx5_flow_group *fg,
++				      int modify_mask,
++				      struct fs_fte *fte)
++{
++	return fpga_ipsec_fs_update_fte(ns, ft, fg, modify_mask, fte,
++					false);
++}
++
++static int
++mlx5_fpga_ipsec_fs_delete_fte_ingress(struct mlx5_flow_root_namespace *ns,
++				      struct mlx5_flow_table *ft,
++				      struct fs_fte *fte)
++{
++	return fpga_ipsec_fs_delete_fte(ns, ft, fte, false);
++}
++
++static struct mlx5_flow_cmds fpga_ipsec_ingress;
++static struct mlx5_flow_cmds fpga_ipsec_egress;
++
++const struct mlx5_flow_cmds *mlx5_fs_cmd_get_default_ipsec_fpga_cmds(enum fs_flow_table_type type)
++{
++	switch (type) {
++	case FS_FT_NIC_RX:
++		return &fpga_ipsec_ingress;
++	case FS_FT_NIC_TX:
++		return &fpga_ipsec_egress;
++	default:
++		WARN_ON(true);
++		return NULL;
++	}
++}
++
++static int mlx5_fpga_ipsec_init(struct mlx5_core_dev *mdev)
++{
++	struct mlx5_fpga_conn_attr init_attr = {0};
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++	struct mlx5_fpga_conn *conn;
++	int err;
++
++	if (!mlx5_fpga_is_ipsec_device(mdev))
++		return 0;
++
++	fdev->ipsec = kzalloc(sizeof(*fdev->ipsec), GFP_KERNEL);
++	if (!fdev->ipsec)
++		return -ENOMEM;
++
++	fdev->ipsec->fdev = fdev;
++
++	err = mlx5_fpga_get_sbu_caps(fdev, sizeof(fdev->ipsec->caps),
++				     fdev->ipsec->caps);
++	if (err) {
++		mlx5_fpga_err(fdev, "Failed to retrieve IPSec extended capabilities: %d\n",
++			      err);
++		goto error;
++	}
++
++	INIT_LIST_HEAD(&fdev->ipsec->pending_cmds);
++	spin_lock_init(&fdev->ipsec->pending_cmds_lock);
++
++	init_attr.rx_size = SBU_QP_QUEUE_SIZE;
++	init_attr.tx_size = SBU_QP_QUEUE_SIZE;
++	init_attr.recv_cb = mlx5_fpga_ipsec_recv;
++	init_attr.cb_arg = fdev;
++	conn = mlx5_fpga_sbu_conn_create(fdev, &init_attr);
++	if (IS_ERR(conn)) {
++		err = PTR_ERR(conn);
++		mlx5_fpga_err(fdev, "Error creating IPSec command connection %d\n",
++			      err);
++		goto error;
++	}
++	fdev->ipsec->conn = conn;
++
++	err = rhashtable_init(&fdev->ipsec->sa_hash, &rhash_sa);
++	if (err)
++		goto err_destroy_conn;
++	mutex_init(&fdev->ipsec->sa_hash_lock);
++
++	fdev->ipsec->rules_rb = RB_ROOT;
++	mutex_init(&fdev->ipsec->rules_rb_lock);
++
++	err = mlx5_fpga_ipsec_enable_supported_caps(mdev);
++	if (err) {
++		mlx5_fpga_err(fdev, "Failed to enable IPSec extended capabilities: %d\n",
++			      err);
++		goto err_destroy_hash;
++	}
++
++	ida_init(&fdev->ipsec->halloc);
++
++	return 0;
++
++err_destroy_hash:
++	rhashtable_destroy(&fdev->ipsec->sa_hash);
++
++err_destroy_conn:
++	mlx5_fpga_sbu_conn_destroy(conn);
++
++error:
++	kfree(fdev->ipsec);
++	fdev->ipsec = NULL;
++	return err;
++}
++
++static void destroy_rules_rb(struct rb_root *root)
++{
++	struct mlx5_fpga_ipsec_rule *r, *tmp;
++
++	rbtree_postorder_for_each_entry_safe(r, tmp, root, node) {
++		rb_erase(&r->node, root);
++		mlx5_fpga_ipsec_delete_sa_ctx(r->ctx);
++		kfree(r);
++	}
++}
++
++static void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev)
++{
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++
++	if (!mlx5_fpga_is_ipsec_device(mdev))
++		return;
++
++	ida_destroy(&fdev->ipsec->halloc);
++	destroy_rules_rb(&fdev->ipsec->rules_rb);
++	rhashtable_destroy(&fdev->ipsec->sa_hash);
++
++	mlx5_fpga_sbu_conn_destroy(fdev->ipsec->conn);
++	kfree(fdev->ipsec);
++	fdev->ipsec = NULL;
++}
++
++void mlx5_fpga_ipsec_build_fs_cmds(void)
++{
++	/* ingress */
++	fpga_ipsec_ingress.create_flow_table =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(false))->create_flow_table;
++	fpga_ipsec_ingress.destroy_flow_table =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(false))->destroy_flow_table;
++	fpga_ipsec_ingress.modify_flow_table =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(false))->modify_flow_table;
++	fpga_ipsec_ingress.create_flow_group =
++		mlx5_fpga_ipsec_fs_create_flow_group_ingress;
++	fpga_ipsec_ingress.destroy_flow_group =
++		 mlx5_fs_cmd_get_default(egress_to_fs_ft(false))->destroy_flow_group;
++	fpga_ipsec_ingress.create_fte =
++		mlx5_fpga_ipsec_fs_create_fte_ingress;
++	fpga_ipsec_ingress.update_fte =
++		mlx5_fpga_ipsec_fs_update_fte_ingress;
++	fpga_ipsec_ingress.delete_fte =
++		mlx5_fpga_ipsec_fs_delete_fte_ingress;
++	fpga_ipsec_ingress.update_root_ft =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(false))->update_root_ft;
++
++	/* egress */
++	fpga_ipsec_egress.create_flow_table =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(true))->create_flow_table;
++	fpga_ipsec_egress.destroy_flow_table =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(true))->destroy_flow_table;
++	fpga_ipsec_egress.modify_flow_table =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(true))->modify_flow_table;
++	fpga_ipsec_egress.create_flow_group =
++		mlx5_fpga_ipsec_fs_create_flow_group_egress;
++	fpga_ipsec_egress.destroy_flow_group =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(true))->destroy_flow_group;
++	fpga_ipsec_egress.create_fte =
++		mlx5_fpga_ipsec_fs_create_fte_egress;
++	fpga_ipsec_egress.update_fte =
++		mlx5_fpga_ipsec_fs_update_fte_egress;
++	fpga_ipsec_egress.delete_fte =
++		mlx5_fpga_ipsec_fs_delete_fte_egress;
++	fpga_ipsec_egress.update_root_ft =
++		mlx5_fs_cmd_get_default(egress_to_fs_ft(true))->update_root_ft;
++}
++
++static int
++mlx5_fpga_esp_validate_xfrm_attrs(struct mlx5_core_dev *mdev,
++				  const struct mlx5_accel_esp_xfrm_attrs *attrs)
++{
++	if (attrs->tfc_pad) {
++		mlx5_core_err(mdev, "Cannot offload xfrm states with tfc padding\n");
++		return -EOPNOTSUPP;
++	}
++
++	if (attrs->replay_type != MLX5_ACCEL_ESP_REPLAY_NONE) {
++		mlx5_core_err(mdev, "Cannot offload xfrm states with anti replay\n");
++		return -EOPNOTSUPP;
++	}
++
++	if (attrs->keymat_type != MLX5_ACCEL_ESP_KEYMAT_AES_GCM) {
++		mlx5_core_err(mdev, "Only aes gcm keymat is supported\n");
++		return -EOPNOTSUPP;
++	}
++
++	if (attrs->keymat.aes_gcm.iv_algo !=
++	    MLX5_ACCEL_ESP_AES_GCM_IV_ALGO_SEQ) {
++		mlx5_core_err(mdev, "Only iv sequence algo is supported\n");
++		return -EOPNOTSUPP;
++	}
++
++	if (attrs->keymat.aes_gcm.icv_len != 128) {
++		mlx5_core_err(mdev, "Cannot offload xfrm states with AEAD ICV length other than 128bit\n");
++		return -EOPNOTSUPP;
++	}
++
++	if (attrs->keymat.aes_gcm.key_len != 128 &&
++	    attrs->keymat.aes_gcm.key_len != 256) {
++		mlx5_core_err(mdev, "Cannot offload xfrm states with AEAD key length other than 128/256 bit\n");
++		return -EOPNOTSUPP;
++	}
++
++	if ((attrs->flags & MLX5_ACCEL_ESP_FLAGS_ESN_TRIGGERED) &&
++	    (!MLX5_GET(ipsec_extended_cap, mdev->fpga->ipsec->caps,
++		       v2_command))) {
++		mlx5_core_err(mdev, "Cannot offload xfrm states with AEAD key length other than 128/256 bit\n");
++		return -EOPNOTSUPP;
++	}
++
++	return 0;
++}
++
++static struct mlx5_accel_esp_xfrm *
++mlx5_fpga_esp_create_xfrm(struct mlx5_core_dev *mdev,
++			  const struct mlx5_accel_esp_xfrm_attrs *attrs,
++			  u32 flags)
++{
++	struct mlx5_fpga_esp_xfrm *fpga_xfrm;
++
++	if (!(flags & MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA)) {
++		mlx5_core_warn(mdev, "Tried to create an esp action without metadata\n");
++		return ERR_PTR(-EINVAL);
++	}
++
++	if (mlx5_fpga_esp_validate_xfrm_attrs(mdev, attrs)) {
++		mlx5_core_warn(mdev, "Tried to create an esp with unsupported attrs\n");
++		return ERR_PTR(-EOPNOTSUPP);
++	}
++
++	fpga_xfrm = kzalloc(sizeof(*fpga_xfrm), GFP_KERNEL);
++	if (!fpga_xfrm)
++		return ERR_PTR(-ENOMEM);
++
++	mutex_init(&fpga_xfrm->lock);
++	memcpy(&fpga_xfrm->accel_xfrm.attrs, attrs,
++	       sizeof(fpga_xfrm->accel_xfrm.attrs));
++
++	return &fpga_xfrm->accel_xfrm;
++}
++
++static void mlx5_fpga_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm)
++{
++	struct mlx5_fpga_esp_xfrm *fpga_xfrm =
++			container_of(xfrm, struct mlx5_fpga_esp_xfrm,
++				     accel_xfrm);
++	/* assuming no sa_ctx are connected to this xfrm_ctx */
++	kfree(fpga_xfrm);
++}
++
++static int mlx5_fpga_esp_modify_xfrm(struct mlx5_accel_esp_xfrm *xfrm,
++				     const struct mlx5_accel_esp_xfrm_attrs *attrs)
++{
++	struct mlx5_core_dev *mdev = xfrm->mdev;
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++	struct mlx5_fpga_ipsec *fipsec = fdev->ipsec;
++	struct mlx5_fpga_esp_xfrm *fpga_xfrm;
++	struct mlx5_ifc_fpga_ipsec_sa org_hw_sa;
++
++	int err = 0;
++
++	if (!memcmp(&xfrm->attrs, attrs, sizeof(xfrm->attrs)))
++		return 0;
++
++	if (mlx5_fpga_esp_validate_xfrm_attrs(mdev, attrs)) {
++		mlx5_core_warn(mdev, "Tried to create an esp with unsupported attrs\n");
++		return -EOPNOTSUPP;
++	}
++
++	if (is_v2_sadb_supported(fipsec)) {
++		mlx5_core_warn(mdev, "Modify esp is not supported\n");
++		return -EOPNOTSUPP;
++	}
++
++	fpga_xfrm = container_of(xfrm, struct mlx5_fpga_esp_xfrm, accel_xfrm);
++
++	mutex_lock(&fpga_xfrm->lock);
++
++	if (!fpga_xfrm->sa_ctx)
++		/* Unbounded xfrm, chane only sw attrs */
++		goto change_sw_xfrm_attrs;
++
++	/* copy original hw sa */
++	memcpy(&org_hw_sa, &fpga_xfrm->sa_ctx->hw_sa, sizeof(org_hw_sa));
++	mutex_lock(&fipsec->sa_hash_lock);
++	/* remove original hw sa from hash */
++	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash,
++				       &fpga_xfrm->sa_ctx->hash, rhash_sa));
++	/* update hw_sa with new xfrm attrs*/
++	mlx5_fpga_ipsec_build_hw_xfrm(xfrm->mdev, attrs,
++				      &fpga_xfrm->sa_ctx->hw_sa);
++	/* try to insert new hw_sa to hash */
++	err = rhashtable_insert_fast(&fipsec->sa_hash,
++				     &fpga_xfrm->sa_ctx->hash, rhash_sa);
++	if (err)
++		goto rollback_sa;
++
++	/* modify device with new hw_sa */
++	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &fpga_xfrm->sa_ctx->hw_sa,
++					   MLX5_FPGA_IPSEC_CMD_OP_MOD_SA_V2);
++	fpga_xfrm->sa_ctx->hw_sa.ipsec_sa_v1.cmd = 0;
++	if (err)
++		WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash,
++					       &fpga_xfrm->sa_ctx->hash,
++					       rhash_sa));
++rollback_sa:
++	if (err) {
++		/* return original hw_sa to hash */
++		memcpy(&fpga_xfrm->sa_ctx->hw_sa, &org_hw_sa,
++		       sizeof(org_hw_sa));
++		WARN_ON(rhashtable_insert_fast(&fipsec->sa_hash,
++					       &fpga_xfrm->sa_ctx->hash,
++					       rhash_sa));
++	}
++	mutex_unlock(&fipsec->sa_hash_lock);
++
++change_sw_xfrm_attrs:
++	if (!err)
++		memcpy(&xfrm->attrs, attrs, sizeof(xfrm->attrs));
++	mutex_unlock(&fpga_xfrm->lock);
++	return err;
++}
++
++static const struct mlx5_accel_ipsec_ops fpga_ipsec_ops = {
++	.device_caps = mlx5_fpga_ipsec_device_caps,
++	.counters_count = mlx5_fpga_ipsec_counters_count,
++	.counters_read = mlx5_fpga_ipsec_counters_read,
++	.create_hw_context = mlx5_fpga_ipsec_create_sa_ctx,
++	.free_hw_context = mlx5_fpga_ipsec_delete_sa_ctx,
++	.init = mlx5_fpga_ipsec_init,
++	.cleanup = mlx5_fpga_ipsec_cleanup,
++	.esp_create_xfrm = mlx5_fpga_esp_create_xfrm,
++	.esp_modify_xfrm = mlx5_fpga_esp_modify_xfrm,
++	.esp_destroy_xfrm = mlx5_fpga_esp_destroy_xfrm,
++};
++
++const struct mlx5_accel_ipsec_ops *mlx5_fpga_ipsec_ops(struct mlx5_core_dev *mdev)
++{
++	if (!mlx5_fpga_is_ipsec_device(mdev))
++		return NULL;
++
++	return &fpga_ipsec_ops;
++}
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.h b/drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.h
+new file mode 100644
+index 0000000..8931b55
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.h
+@@ -0,0 +1,62 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#ifndef __MLX5_FPGA_IPSEC_H__
++#define __MLX5_FPGA_IPSEC_H__
++
++#include "accel/ipsec.h"
++#include "fs_cmd.h"
++
++#ifdef CONFIG_MLX5_FPGA_IPSEC
++const struct mlx5_accel_ipsec_ops *mlx5_fpga_ipsec_ops(struct mlx5_core_dev *mdev);
++u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev);
++const struct mlx5_flow_cmds *
++mlx5_fs_cmd_get_default_ipsec_fpga_cmds(enum fs_flow_table_type type);
++void mlx5_fpga_ipsec_build_fs_cmds(void);
++bool mlx5_fpga_is_ipsec_device(struct mlx5_core_dev *mdev);
++#else
++static inline
++const struct mlx5_accel_ipsec_ops *mlx5_fpga_ipsec_ops(struct mlx5_core_dev *mdev)
++{ return NULL; }
++static inline u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev) { return 0; }
++static inline const struct mlx5_flow_cmds *
++mlx5_fs_cmd_get_default_ipsec_fpga_cmds(enum fs_flow_table_type type)
++{
++	return mlx5_fs_cmd_get_default(type);
++}
++
++static inline void mlx5_fpga_ipsec_build_fs_cmds(void) {};
++static inline bool mlx5_fpga_is_ipsec_device(struct mlx5_core_dev *mdev) { return false; }
++
++#endif /* CONFIG_MLX5_FPGA_IPSEC */
++#endif	/* __MLX5_FPGA_IPSEC_H__ */
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/sdk.c b/drivers/net/ethernet/mellanox/mlx5/core/fpga/sdk.c
+index 1496296..98a5831 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fpga/sdk.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/sdk.c
+@@ -31,11 +31,25 @@
+  *
+  */
+ 
++#include <linux/errno.h>
++#include <linux/err.h>
++#include <linux/completion.h>
+ #include <linux/mlx5/device.h>
+ 
+ #include "fpga/core.h"
+ #include "fpga/conn.h"
+ #include "fpga/sdk.h"
++#include "fpga/xfer.h"
++#include "mlx5_core.h"
++//#include "accel/ipsec.h"
++
++#define MLX5_FPGA_LOAD_TIMEOUT 25000 /* msec */
++
++struct mem_transfer {
++	struct mlx5_fpga_transaction t;
++	struct completion comp;
++	u8 status;
++};
+ 
+ struct mlx5_fpga_conn *
+ mlx5_fpga_sbu_conn_create(struct mlx5_fpga_device *fdev,
+@@ -58,13 +72,57 @@ int mlx5_fpga_sbu_conn_sendmsg(struct mlx5_fpga_conn *conn,
+ }
+ EXPORT_SYMBOL(mlx5_fpga_sbu_conn_sendmsg);
+ 
++static void mem_complete(const struct mlx5_fpga_transaction *complete,
++			 u8 status)
++{
++	struct mem_transfer *xfer;
++
++	mlx5_fpga_dbg(complete->conn->fdev,
++		      "transaction %p complete status %u", complete, status);
++
++	xfer = container_of(complete, struct mem_transfer, t);
++	xfer->status = status;
++	complete_all(&xfer->comp);
++}
++
++static int mem_transaction(struct mlx5_fpga_device *fdev, size_t size, u64 addr,
++			   void *buf, enum mlx5_fpga_direction direction)
++{
++	int ret;
++	struct mem_transfer xfer;
++
++	if (!fdev->shell_conn) {
++		ret = -ENOTCONN;
++		goto out;
++	}
++
++	xfer.t.data = buf;
++	xfer.t.size = size;
++	xfer.t.addr = addr;
++	xfer.t.conn = fdev->shell_conn;
++	xfer.t.direction = direction;
++	xfer.t.complete = mem_complete;
++	init_completion(&xfer.comp);
++	ret = mlx5_fpga_xfer_exec(&xfer.t);
++	if (ret) {
++		mlx5_fpga_dbg(fdev, "Transfer execution failed: %d\n", ret);
++		goto out;
++	}
++	wait_for_completion(&xfer.comp);
++	if (xfer.status != 0)
++		ret = -EIO;
++
++out:
++	return ret;
++}
++
+ static int mlx5_fpga_mem_read_i2c(struct mlx5_fpga_device *fdev, size_t size,
+ 				  u64 addr, u8 *buf)
+ {
+ 	size_t max_size = MLX5_FPGA_ACCESS_REG_SIZE_MAX;
+ 	size_t bytes_done = 0;
+ 	u8 actual_size;
+-	int err;
++	int err = 0;
+ 
+ 	if (!size)
+ 		return -EINVAL;
+@@ -96,7 +154,7 @@ static int mlx5_fpga_mem_write_i2c(struct mlx5_fpga_device *fdev, size_t size,
+ 	size_t max_size = MLX5_FPGA_ACCESS_REG_SIZE_MAX;
+ 	size_t bytes_done = 0;
+ 	u8 actual_size;
+-	int err;
++	int err = 0;
+ 
+ 	if (!size)
+ 		return -EINVAL;
+@@ -126,7 +184,19 @@ int mlx5_fpga_mem_read(struct mlx5_fpga_device *fdev, size_t size, u64 addr,
+ {
+ 	int ret;
+ 
++	if (access_type == MLX5_FPGA_ACCESS_TYPE_DONTCARE)
++		access_type = fdev->shell_conn ? MLX5_FPGA_ACCESS_TYPE_RDMA :
++						 MLX5_FPGA_ACCESS_TYPE_I2C;
++
++	mlx5_fpga_dbg(fdev, "Reading %zu bytes at 0x%llx over %s",
++		      size, addr, access_type ? "RDMA" : "I2C");
++
+ 	switch (access_type) {
++	case MLX5_FPGA_ACCESS_TYPE_RDMA:
++		ret = mem_transaction(fdev, size, addr, buf, MLX5_FPGA_READ);
++		if (ret)
++			return ret;
++		break;
+ 	case MLX5_FPGA_ACCESS_TYPE_I2C:
+ 		ret = mlx5_fpga_mem_read_i2c(fdev, size, addr, buf);
+ 		if (ret)
+@@ -147,7 +217,19 @@ int mlx5_fpga_mem_write(struct mlx5_fpga_device *fdev, size_t size, u64 addr,
+ {
+ 	int ret;
+ 
++	if (access_type == MLX5_FPGA_ACCESS_TYPE_DONTCARE)
++		access_type = fdev->shell_conn ? MLX5_FPGA_ACCESS_TYPE_RDMA :
++						 MLX5_FPGA_ACCESS_TYPE_I2C;
++
++	mlx5_fpga_dbg(fdev, "Writing %zu bytes at 0x%llx over %s",
++		      size, addr, access_type ? "RDMA" : "I2C");
++
+ 	switch (access_type) {
++	case MLX5_FPGA_ACCESS_TYPE_RDMA:
++		ret = mem_transaction(fdev, size, addr, buf, MLX5_FPGA_WRITE);
++		if (ret)
++			return ret;
++		break;
+ 	case MLX5_FPGA_ACCESS_TYPE_I2C:
+ 		ret = mlx5_fpga_mem_write_i2c(fdev, size, addr, buf);
+ 		if (ret)
+@@ -168,3 +250,235 @@ int mlx5_fpga_get_sbu_caps(struct mlx5_fpga_device *fdev, int size, void *buf)
+ 	return mlx5_fpga_sbu_caps(fdev->mdev, buf, size);
+ }
+ EXPORT_SYMBOL(mlx5_fpga_get_sbu_caps);
++
++u64 mlx5_fpga_ddr_size_get(struct mlx5_fpga_device *fdev)
++{
++	return (u64)MLX5_CAP_FPGA(fdev->mdev, fpga_ddr_size) << 10;
++}
++EXPORT_SYMBOL(mlx5_fpga_ddr_size_get);
++
++u64 mlx5_fpga_ddr_base_get(struct mlx5_fpga_device *fdev)
++{
++	return MLX5_CAP64_FPGA(fdev->mdev, fpga_ddr_start_addr);
++}
++EXPORT_SYMBOL(mlx5_fpga_ddr_base_get);
++
++void mlx5_fpga_client_data_set(struct mlx5_fpga_device *fdev,
++			       struct mlx5_fpga_client *client, void *data)
++{
++	struct mlx5_fpga_client_data *context;
++
++	list_for_each_entry(context, &fdev->client_data_list, list) {
++		if (context->client != client)
++			continue;
++		context->data = data;
++		return;
++	}
++
++	mlx5_fpga_warn(fdev, "No client context found for %s\n", client->name);
++}
++EXPORT_SYMBOL(mlx5_fpga_client_data_set);
++
++void *mlx5_fpga_client_data_get(struct mlx5_fpga_device *fdev,
++				struct mlx5_fpga_client *client)
++{
++	struct mlx5_fpga_client_data *context;
++	void *ret = NULL;
++
++	list_for_each_entry(context, &fdev->client_data_list, list) {
++		if (context->client != client)
++			continue;
++		ret = context->data;
++		goto out;
++	}
++	mlx5_fpga_warn(fdev, "No client context found for %s\n", client->name);
++
++out:
++	return ret;
++}
++EXPORT_SYMBOL(mlx5_fpga_client_data_get);
++
++void mlx5_fpga_device_query(struct mlx5_fpga_device *fdev,
++			    struct mlx5_fpga_query *query)
++{
++	unsigned long flags;
++	int err;
++
++	err = mlx5_fpga_query(fdev->mdev, query);
++
++	spin_lock_irqsave(&fdev->state_lock, flags);
++
++	if (err) {
++		query->admin_image = 2; /* Failover */
++		query->oper_image = 2; /* Failover */
++		query->image_status = 1; /* Failure */
++	}
++
++	fdev->last_admin_image = query->admin_image;
++	fdev->last_oper_image = query->oper_image;
++	fdev->image_status = query->image_status;
++
++	spin_unlock_irqrestore(&fdev->state_lock, flags);
++
++	if (err)
++		mlx5_fpga_err(fdev, "Failed to query status: %d\n", err);
++}
++
++EXPORT_SYMBOL(mlx5_fpga_device_query);
++
++int mlx5_fpga_device_reload(struct mlx5_fpga_device *fdev,
++			    enum mlx5_fpga_image image)
++{
++	struct mlx5_core_dev *mdev = fdev->mdev;
++	unsigned long timeout;
++	unsigned long flags;
++	int err = 0;
++
++	spin_lock_irqsave(&fdev->state_lock, flags);
++	switch (fdev->fdev_state) {
++	case MLX5_FDEV_STATE_NONE:
++		err = -ENODEV;
++		break;
++	case MLX5_FDEV_STATE_IN_PROGRESS:
++		err = -EBUSY;
++		break;
++	case MLX5_FDEV_STATE_SUCCESS:
++	case MLX5_FDEV_STATE_FAILURE:
++	case MLX5_FDEV_STATE_DISCONNECTED:
++		break;
++	}
++	spin_unlock_irqrestore(&fdev->state_lock, flags);
++	if (err)
++		return err;
++
++	mutex_lock(&mdev->intf_state_mutex);
++	clear_bit(MLX5_INTERFACE_STATE_UP, &mdev->intf_state);
++
++	mlx5_unregister_device(mdev);
++//	mlx5_accel_ipsec_cleanup(mdev);
++	mlx5_fpga_device_stop(mdev);
++
++	fdev->fdev_state = MLX5_FDEV_STATE_IN_PROGRESS; //MLX5_FPGA_STATUS_IN_PROGRESS;
++	reinit_completion(&fdev->load_event);
++
++	if (image <= MLX5_FPGA_IMAGE_MAX) {
++		mlx5_fpga_info(fdev, "Loading from flash\n");
++		err = mlx5_fpga_load(mdev, image);
++		if (err) {
++			mlx5_fpga_err(fdev, "Failed to request load: %d\n",
++				      err);
++			goto out;
++		}
++	} else {
++		mlx5_fpga_info(fdev, "Resetting\n");
++		err = mlx5_fpga_ctrl_op(mdev, MLX5_FPGA_CTRL_OPERATION_RESET);
++		if (err) {
++			mlx5_fpga_err(fdev, "Failed to request reset: %d\n",
++				      err);
++			goto out;
++		}
++	}
++
++	timeout = jiffies + msecs_to_jiffies(MLX5_FPGA_LOAD_TIMEOUT);
++	err = wait_for_completion_timeout(&fdev->load_event, timeout - jiffies);
++	if (err < 0) {
++		mlx5_fpga_err(fdev, "Failed waiting for FPGA load: %d\n", err);
++		fdev->fdev_state = MLX5_FDEV_STATE_FAILURE;
++		goto out;
++	}
++
++	err = mlx5_fpga_device_start(mdev);
++	if (err) {
++		mlx5_core_err(mdev, "fpga device start failed %d\n", err);
++		goto out;
++	}
++	
++//	mlx5_accel_ipsec_init(mdev);
++
++	mlx5_register_device(mdev);
++
++	set_bit(MLX5_INTERFACE_STATE_UP, &mdev->intf_state);
++	goto out;
++
++out:
++	mutex_unlock(&mdev->intf_state_mutex);
++	return err;
++}
++EXPORT_SYMBOL(mlx5_fpga_device_reload);
++
++int mlx5_fpga_flash_select(struct mlx5_fpga_device *fdev,
++			   enum mlx5_fpga_image image)
++{
++	unsigned long flags;
++	int err;
++
++	spin_lock_irqsave(&fdev->state_lock, flags);
++	switch (fdev->fdev_state) {
++	case MLX5_FDEV_STATE_NONE:
++		spin_unlock_irqrestore(&fdev->state_lock, flags);
++		return -ENODEV;
++	case MLX5_FDEV_STATE_DISCONNECTED:
++	case MLX5_FDEV_STATE_IN_PROGRESS:
++	case MLX5_FDEV_STATE_SUCCESS:
++	case MLX5_FDEV_STATE_FAILURE:
++		break;
++	}
++	spin_unlock_irqrestore(&fdev->state_lock, flags);
++
++	err = mlx5_fpga_image_select(fdev->mdev, image);
++	if (err)
++		mlx5_fpga_err(fdev, "Failed to select flash image: %d\n", err);
++	else
++		fdev->last_admin_image = image;
++	return err;
++}
++EXPORT_SYMBOL(mlx5_fpga_flash_select);
++
++int mlx5_fpga_connectdisconnect(struct mlx5_fpga_device *fdev,
++				enum mlx5_fpga_connect *connect)
++{
++	unsigned long flags;
++	int err;
++
++	spin_lock_irqsave(&fdev->state_lock, flags);
++	switch (fdev->fdev_state) {
++	case MLX5_FDEV_STATE_NONE:
++		spin_unlock_irqrestore(&fdev->state_lock, flags);
++		return -ENODEV;
++	case MLX5_FDEV_STATE_IN_PROGRESS:
++	case MLX5_FDEV_STATE_SUCCESS:
++	case MLX5_FDEV_STATE_FAILURE:
++	case MLX5_FDEV_STATE_DISCONNECTED:
++		break;
++	}
++	spin_unlock_irqrestore(&fdev->state_lock, flags);
++
++	err = mlx5_fpga_ctrl_connect(fdev->mdev, connect);
++	if (err)
++		mlx5_fpga_err(fdev, "Failed to connect/disconnect: %d\n", err);
++	return err;
++}
++EXPORT_SYMBOL(mlx5_fpga_connectdisconnect);
++
++int mlx5_fpga_temperature(struct mlx5_fpga_device *fdev,
++			  struct mlx5_fpga_temperature *temp)
++{
++	return mlx5_fpga_query_mtmp(fdev->mdev, temp);
++}
++EXPORT_SYMBOL(mlx5_fpga_temperature);
++
++struct device *mlx5_fpga_dev(struct mlx5_fpga_device *fdev)
++{
++	return &fdev->mdev->pdev->dev;
++}
++EXPORT_SYMBOL(mlx5_fpga_dev);
++
++void mlx5_fpga_get_cap(struct mlx5_fpga_device *fdev, u32 *fpga_caps)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&fdev->state_lock, flags);
++	memcpy(fpga_caps, &fdev->mdev->caps.fpga, sizeof(fdev->mdev->caps.fpga));
++	spin_unlock_irqrestore(&fdev->state_lock, flags);
++}
++EXPORT_SYMBOL(mlx5_fpga_get_cap);
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/sdk.h b/drivers/net/ethernet/mellanox/mlx5/core/fpga/sdk.h
+index 89ef592..46ff510 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fpga/sdk.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/sdk.h
+@@ -34,9 +34,13 @@
+ #ifndef MLX5_FPGA_SDK_H
+ #define MLX5_FPGA_SDK_H
+ 
++#include <linux/mlx5/driver.h>
+ #include <linux/types.h>
++#include <linux/list.h>
+ #include <linux/dma-direction.h>
+ 
++#include "fpga/cmd.h"
++
+ /**
+  * DOC: Innova SDK
+  * This header defines the in-kernel API for Innova FPGA client drivers.
+@@ -44,21 +48,65 @@
+ #define SBU_QP_QUEUE_SIZE 8
+ #define MLX5_FPGA_CMD_TIMEOUT_MSEC (60 * 1000)
+ 
++#define MLX5_FPGA_CLIENT_NAME_MAX 64
++
+ /**
+  * enum mlx5_fpga_access_type - Enumerated the different methods possible for
+  * accessing the device memory address space
+- *
+- * @MLX5_FPGA_ACCESS_TYPE_I2C: Use the slow CX-FPGA I2C bus
+- * @MLX5_FPGA_ACCESS_TYPE_DONTCARE: Use the fastest available method
+  */
+ enum mlx5_fpga_access_type {
++	/** Use the slow CX-FPGA I2C bus */
+ 	MLX5_FPGA_ACCESS_TYPE_I2C = 0x0,
+-	MLX5_FPGA_ACCESS_TYPE_DONTCARE = 0x0,
++	/** Use the fast 'shell QP' */
++	MLX5_FPGA_ACCESS_TYPE_RDMA,
++	/** Use the fastest available method */
++	MLX5_FPGA_ACCESS_TYPE_DONTCARE,
++	MLX5_FPGA_ACCESS_TYPE_MAX = MLX5_FPGA_ACCESS_TYPE_DONTCARE,
+ };
+ 
+ struct mlx5_fpga_conn;
+ struct mlx5_fpga_device;
+ 
++/**
++ * struct mlx5_fpga_client - Describes an Innova client driver
++ */
++struct mlx5_fpga_client {
++	/**
++	 * @create: Informs the client that an Innova device was created.
++	 * The device is not yet operational at this stage
++	 * This callback is optional
++	 * @fdev: The FPGA device
++	 */
++	void (*create)(struct mlx5_fpga_device *fdev);
++	/**
++	 * @add: Informs the client that a core device is ready and operational.
++	 * @fdev: The FPGA device
++	 * @param vid SBU Vendor ID
++	 * @param pid SBU Product ID
++	 * Any SBU-specific initialization should happen at this stage
++	 * Return: 0 on success, nonzero error value otherwise
++	 */
++	int  (*add)(struct mlx5_fpga_device *fdev, u32 vid, u16 pid);
++	/**
++	 * @remove: Informs the client that a core device is not operational
++	 *          anymore.
++	 * @fdev: The FPGA device
++	 * SBU-specific cleanup should happen at this stage
++	 * This callback is called once for every successful call to add()
++	 */
++	void (*remove)(struct mlx5_fpga_device *fdev);
++	/**
++	 * @destroy: Informs the client that a core device is being destroyed.
++	 * @fdev: The FPGA device
++	 * The device is not operational at this stage
++	 */
++	void (*destroy)(struct mlx5_fpga_device *fdev);
++	/** The name of this client driver */
++	char name[MLX5_FPGA_CLIENT_NAME_MAX];
++	/** For use by core. A link in the list of client drivers */
++	struct list_head list;
++};
++
+ /**
+  * struct mlx5_fpga_dma_entry - A scatter-gather DMA entry
+  */
+@@ -114,10 +162,58 @@ struct mlx5_fpga_conn_attr {
+ 	 * subsequent receives.
+ 	 */
+ 	void (*recv_cb)(void *cb_arg, struct mlx5_fpga_dma_buf *buf);
+-	/** @cb_arg: A context to be passed to recv_cb callback */
+ 	void *cb_arg;
+ };
+ 
++/**
++ * mlx5_fpga_client_register() - Register a client driver
++ * @client: The properties of the client driver
++ *
++ * Should be called from a client driver's module init routine.
++ * Note: The core will immediately callback create() and add() for any existing
++ * devices in the system, as well as new ones added later on.
++ */
++void mlx5_fpga_client_register(struct mlx5_fpga_client *client);
++/**
++ * mlx5_fpga_client_unregister() - Unregister a client driver
++ * @client: The client driver to unregister
++ *
++ * Should be called from a client driver's module exit routine.
++ * Note: The core will immediately callback delete() and destroy() for any
++ * created/added devices in the system, to clean up their state.
++ */
++void mlx5_fpga_client_unregister(struct mlx5_fpga_client *client);
++
++/**
++ * mlx5_fpga_device_reload() - Force the FPGA to reload its synthesis from flash
++ * @fdev: The FPGA device
++ * @image: Which flash image to load
++ *
++ * This routine attempts graceful teardown of all device resources before
++ * loading. This includes a callback to client driver delete().
++ * Calls client driver add() once device is operational again.
++ * Blocks until the new synthesis is loaded, and the device is fully
++ * initialized.
++ *
++ * Return: 0 if successful, or a negative error value otherwise
++ */
++int mlx5_fpga_device_reload(struct mlx5_fpga_device *fdev,
++			    enum mlx5_fpga_image image);
++
++/**
++ * mlx5_fpga_flash_select() - Select the current active flash
++ * @fdev: The FPGA device
++ * @image: Which flash image will be active
++ *
++ * This routine selects the active flash by programming the relevant MUX.
++ * Useful prior to burning a new image on flash.
++ * This setting is volatile and is reset upon reboot or power-cycle
++ *
++ * Return: 0 if successful, or a negative error value otherwise
++ */
++int mlx5_fpga_flash_select(struct mlx5_fpga_device *fdev,
++			   enum mlx5_fpga_image image);
++
+ /**
+  * mlx5_fpga_sbu_conn_create() - Initialize a new FPGA SBU connection
+  * @fdev: The FPGA device
+@@ -147,7 +243,7 @@ void mlx5_fpga_sbu_conn_destroy(struct mlx5_fpga_conn *conn);
+ 
+ /**
+  * mlx5_fpga_sbu_conn_sendmsg() - Queue the transmission of a packet
+- * @conn: An FPGA SBU connection
++ * @fdev: An FPGA SBU connection
+  * @buf: The packet buffer
+  *
+  * Queues a packet for transmission over an FPGA SBU connection.
+@@ -211,4 +307,96 @@ int mlx5_fpga_mem_write(struct mlx5_fpga_device *fdev, size_t size, u64 addr,
+  */
+ int mlx5_fpga_get_sbu_caps(struct mlx5_fpga_device *fdev, int size, void *buf);
+ 
++/**
++ * mlx5_fpga_ddr_size_get() - Retrieve the size of FPGA DDR
++ * @fdev: The FPGA device
++ *
++ * Return: Size of DDR avaailable for FPGA, in bytes
++ */
++u64 mlx5_fpga_ddr_size_get(struct mlx5_fpga_device *fdev);
++
++/**
++ * mlx5_fpga_ddr_base_get() - Retrieve the base address of FPGA DDR
++ * @fdev: The FPGA device
++ *
++ * Return: Base address of DDR in FPGA address space
++ */
++u64 mlx5_fpga_ddr_base_get(struct mlx5_fpga_device *fdev);
++
++/**
++ * mlx5_fpga_client_data_set() - Attach client-defined private value to a device
++ * @fdev: The FPGA device
++ * @client: The client driver
++ * @data: Opaque private value
++ *
++ * Client driver may use the private value for storing device-specific
++ * state and configuration information, and may retrieve it with a call to
++ * mlx5_fpga_client_data_get().
++ */
++void mlx5_fpga_client_data_set(struct mlx5_fpga_device *fdev,
++			       struct mlx5_fpga_client *client,
++			       void *data);
++
++/**
++ * mlx5_fpga_client_data_get() - Retrieve client-defined private value
++ * @fdev: The FPGA device
++ * @client: The client driver
++ *
++ * Client driver may use the private value for storing device-specific
++ * state and configuration information by calling mlx5_fpga_client_data_set()
++ *
++ * Return: The private value
++ */
++void *mlx5_fpga_client_data_get(struct mlx5_fpga_device *fdev,
++				struct mlx5_fpga_client *client);
++
++/**
++ * mlx5_fpga_device_query() - Query FPGA device state information
++ * @fdev: The FPGA device
++ * @query: Returns the device state
++ *
++ * Queries the device state and returns it in *query
++ */
++void mlx5_fpga_device_query(struct mlx5_fpga_device *fdev,
++			    struct mlx5_fpga_query *query);
++
++/**
++ * mlx5_fpga_dev() - Retrieve FPGA device structure
++ * @fdev: The FPGA device
++
++ * Return: A pointer to a struct device, which may be used with dev_* logging,
++ *         sysfs extensions, etc.
++ */
++struct device *mlx5_fpga_dev(struct mlx5_fpga_device *fdev);
++
++/**
++ * mlx5_fpga_temperature() - Retrieve FPGA sensor of temperature
++ * @fdev: The FPGA device
++
++ * Return: 0 if successful
++ *         or any other error value otherwise.
++ */
++int mlx5_fpga_temperature(struct mlx5_fpga_device *fdev,
++			  struct mlx5_fpga_temperature *temp);
++
++/**
++ * mlx5_fpga_connectdisconnect() - Connect/disconnect ConnectX to FPGA
++ * @fdev: The FPGA device
++
++ * Return: 0 if successful
++ *         or any other error value otherwise.
++ */
++int mlx5_fpga_connectdisconnect(struct mlx5_fpga_device *fdev,
++				enum mlx5_fpga_connect *connect);
++
++/**
++ * mlx5_fpga_get_cap() - Returns the FPGA cap mailbox from FW without parsing.
++ * @fdev: The FPGA device
++ * @fpga_caps: Is an array with a length of according to the size of
++ * 			   mlx5_ifc_fpga_cap_bits/32
++ *
++ * Returns a copy of the FPGA caps mailbox and returns it in fpga_caps
++ */
++void mlx5_fpga_get_cap(struct mlx5_fpga_device *fdev, u32 *fpga_caps);
++
+ #endif /* MLX5_FPGA_SDK_H */
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.c b/drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.c
+new file mode 100644
+index 0000000..382e8ae
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.c
+@@ -0,0 +1,646 @@
++/*
++ * Copyright (c) 2018 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#ifdef HAVE_UAPI_LINUX_TLS_H
++
++#include <linux/mlx5/device.h>
++#include "fpga/tls.h"
++#include "fpga/cmd.h"
++#include "fpga/sdk.h"
++#include "fpga/core.h"
++#include "accel/tls.h"
++
++struct mlx5_fpga_tls_command_context;
++
++typedef void (*mlx5_fpga_tls_command_complete)
++	(struct mlx5_fpga_conn *conn, struct mlx5_fpga_device *fdev,
++	 struct mlx5_fpga_tls_command_context *ctx,
++	 struct mlx5_fpga_dma_buf *resp);
++
++struct mlx5_fpga_tls_command_context {
++	struct list_head list;
++	/* There is no guarantee on the order between the TX completion
++	 * and the command response.
++	 * The TX completion is going to touch cmd->buf even in
++	 * the case of successful transmission.
++	 * So instead of requiring separate allocations for cmd
++	 * and cmd->buf we've decided to use a reference counter
++	 */
++	refcount_t ref;
++	struct mlx5_fpga_dma_buf buf;
++	mlx5_fpga_tls_command_complete complete;
++};
++
++static void
++mlx5_fpga_tls_put_command_ctx(struct mlx5_fpga_tls_command_context *ctx)
++{
++	if (refcount_dec_and_test(&ctx->ref))
++		kfree(ctx);
++}
++
++static void mlx5_fpga_tls_cmd_complete(struct mlx5_fpga_device *fdev,
++				       struct mlx5_fpga_dma_buf *resp)
++{
++	struct mlx5_fpga_conn *conn = fdev->tls->conn;
++	struct mlx5_fpga_tls_command_context *ctx;
++	struct mlx5_fpga_tls *tls = fdev->tls;
++	unsigned long flags;
++
++	spin_lock_irqsave(&tls->pending_cmds_lock, flags);
++	ctx = list_first_entry(&tls->pending_cmds,
++			       struct mlx5_fpga_tls_command_context, list);
++	list_del(&ctx->list);
++	spin_unlock_irqrestore(&tls->pending_cmds_lock, flags);
++	ctx->complete(conn, fdev, ctx, resp);
++}
++
++static void mlx5_fpga_cmd_send_complete(struct mlx5_fpga_conn *conn,
++					struct mlx5_fpga_device *fdev,
++					struct mlx5_fpga_dma_buf *buf,
++					u8 status)
++{
++	struct mlx5_fpga_tls_command_context *ctx =
++	    container_of(buf, struct mlx5_fpga_tls_command_context, buf);
++
++	mlx5_fpga_tls_put_command_ctx(ctx);
++
++	if (unlikely(status))
++		mlx5_fpga_tls_cmd_complete(fdev, NULL);
++}
++
++static void mlx5_fpga_tls_cmd_send(struct mlx5_fpga_device *fdev,
++				   struct mlx5_fpga_tls_command_context *cmd,
++				   mlx5_fpga_tls_command_complete complete)
++{
++	struct mlx5_fpga_tls *tls = fdev->tls;
++	unsigned long flags;
++	int ret;
++
++	refcount_set(&cmd->ref, 2);
++	cmd->complete = complete;
++	cmd->buf.complete = mlx5_fpga_cmd_send_complete;
++
++	spin_lock_irqsave(&tls->pending_cmds_lock, flags);
++	/* mlx5_fpga_sbu_conn_sendmsg is called under pending_cmds_lock
++	 * to make sure commands are inserted to the tls->pending_cmds list
++	 * and the command QP in the same order.
++	 */
++	ret = mlx5_fpga_sbu_conn_sendmsg(tls->conn, &cmd->buf);
++	if (likely(!ret))
++		list_add_tail(&cmd->list, &tls->pending_cmds);
++	else
++		complete(tls->conn, fdev, cmd, NULL);
++	spin_unlock_irqrestore(&tls->pending_cmds_lock, flags);
++}
++
++/* Start of context identifiers range (inclusive) */
++#define SWID_START	0
++/* End of context identifiers range (exclusive) */
++#define SWID_END	BIT(24)
++
++static int mlx5_fpga_tls_alloc_swid(struct idr *idr, spinlock_t *idr_spinlock,
++				    void *ptr)
++{
++	unsigned long flags;
++	int ret;
++
++	/* TLS metadata format is 1 byte for syndrome followed
++	 * by 3 bytes of swid (software ID)
++	 * swid must not exceed 3 bytes.
++	 * See tls_rxtx.c:insert_pet() for details
++	 */
++	BUILD_BUG_ON((SWID_END - 1) & 0xFF000000);
++
++	idr_preload(GFP_KERNEL);
++	spin_lock_irqsave(idr_spinlock, flags);
++	ret = idr_alloc(idr, ptr, SWID_START, SWID_END, GFP_ATOMIC);
++	spin_unlock_irqrestore(idr_spinlock, flags);
++	idr_preload_end();
++
++	return ret;
++}
++
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
++static void *mlx5_fpga_tls_release_swid(struct idr *idr,
++#else
++static void mlx5_fpga_tls_release_swid(struct idr *idr,
++#endif
++					spinlock_t *idr_spinlock, u32 swid)
++{
++	unsigned long flags;
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
++	void *ptr;
++#endif
++
++	spin_lock_irqsave(idr_spinlock, flags);
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
++	ptr = idr_remove(idr, swid);
++#else
++	idr_remove(idr, swid);
++#endif
++	spin_unlock_irqrestore(idr_spinlock, flags);
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
++	return ptr;
++#endif
++}
++
++static void mlx_tls_kfree_complete(struct mlx5_fpga_conn *conn,
++				   struct mlx5_fpga_device *fdev,
++				   struct mlx5_fpga_dma_buf *buf, u8 status)
++{
++	kfree(buf);
++}
++
++static void
++mlx5_fpga_tls_teardown_completion(struct mlx5_fpga_conn *conn,
++				  struct mlx5_fpga_device *fdev,
++				  struct mlx5_fpga_tls_command_context *cmd,
++				  struct mlx5_fpga_dma_buf *resp)
++{
++	if (resp) {
++		u32 syndrome = MLX5_GET(tls_resp, resp->sg[0].data, syndrome);
++
++		if (syndrome)
++			mlx5_fpga_err(fdev,
++				      "Teardown stream failed with syndrome = %d",
++				      syndrome);
++	}
++	mlx5_fpga_tls_put_command_ctx(cmd);
++}
++
++static void mlx5_fpga_tls_flow_to_cmd(void *flow, void *cmd)
++{
++	memcpy(MLX5_ADDR_OF(tls_cmd, cmd, src_port), flow,
++	       MLX5_BYTE_OFF(tls_flow, ipv6));
++
++	MLX5_SET(tls_cmd, cmd, ipv6, MLX5_GET(tls_flow, flow, ipv6));
++	MLX5_SET(tls_cmd, cmd, direction_sx,
++		 MLX5_GET(tls_flow, flow, direction_sx));
++}
++
++int mlx5_fpga_tls_resync_rx(struct mlx5_core_dev *mdev, __be32 handle,
++			    u32 seq, __be64 rcd_sn)
++{
++	struct mlx5_fpga_dma_buf *buf;
++	int size = sizeof(*buf) + MLX5_TLS_COMMAND_SIZE;
++	void *flow;
++	void *cmd;
++	int ret;
++
++	buf = kzalloc(size, GFP_ATOMIC);
++	if (!buf)
++		return -ENOMEM;
++
++	cmd = (buf + 1);
++
++	rcu_read_lock();
++	flow = idr_find(&mdev->fpga->tls->rx_idr, ntohl(handle));
++	if (unlikely(!flow)) {
++		rcu_read_unlock();
++		WARN_ONCE(1, "Received NULL pointer for handle\n");
++		kfree(buf);
++		return -EINVAL;
++	}
++	mlx5_fpga_tls_flow_to_cmd(flow, cmd);
++	rcu_read_unlock();
++
++	MLX5_SET(tls_cmd, cmd, swid, ntohl(handle));
++	MLX5_SET64(tls_cmd, cmd, tls_rcd_sn, be64_to_cpu(rcd_sn));
++	MLX5_SET(tls_cmd, cmd, tcp_sn, seq);
++	MLX5_SET(tls_cmd, cmd, command_type, CMD_RESYNC_RX);
++
++	buf->sg[0].data = cmd;
++	buf->sg[0].size = MLX5_TLS_COMMAND_SIZE;
++	buf->complete = mlx_tls_kfree_complete;
++
++	ret = mlx5_fpga_sbu_conn_sendmsg(mdev->fpga->tls->conn, buf);
++	if (ret < 0)
++		kfree(buf);
++
++	return ret;
++}
++
++static void mlx5_fpga_tls_send_teardown_cmd(struct mlx5_core_dev *mdev,
++					    void *flow, u32 swid, gfp_t flags)
++{
++	struct mlx5_fpga_tls_command_context *ctx;
++	struct mlx5_fpga_dma_buf *buf;
++	void *cmd;
++
++	ctx = kzalloc(sizeof(*ctx) + MLX5_TLS_COMMAND_SIZE, flags);
++	if (!ctx)
++		return;
++
++	buf = &ctx->buf;
++	cmd = (ctx + 1);
++	MLX5_SET(tls_cmd, cmd, command_type, CMD_TEARDOWN_STREAM);
++	MLX5_SET(tls_cmd, cmd, swid, swid);
++
++	mlx5_fpga_tls_flow_to_cmd(flow, cmd);
++	kfree(flow);
++
++	buf->sg[0].data = cmd;
++	buf->sg[0].size = MLX5_TLS_COMMAND_SIZE;
++
++	mlx5_fpga_tls_cmd_send(mdev->fpga, ctx,
++			       mlx5_fpga_tls_teardown_completion);
++}
++
++void mlx5_fpga_tls_del_flow(struct mlx5_core_dev *mdev, u32 swid,
++			    gfp_t flags, bool direction_sx)
++{
++	struct mlx5_fpga_tls *tls = mdev->fpga->tls;
++	void *flow;
++
++	if (direction_sx)
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
++		flow = mlx5_fpga_tls_release_swid(&tls->tx_idr,
++						  &tls->tx_idr_spinlock,
++						  swid);
++#else
++		flow = idr_find(&tls->tx_idr, swid);
++#endif
++	else
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
++		flow = mlx5_fpga_tls_release_swid(&tls->rx_idr,
++						  &tls->rx_idr_spinlock,
++						  swid);
++#else
++		flow = idr_find(&tls->rx_idr, swid);
++#endif
++
++	if (!flow) {
++		mlx5_fpga_err(mdev->fpga, "No flow information for swid %u\n",
++			      swid);
++		return;
++	}
++
++	synchronize_rcu(); /* before kfree(flow) */
++	mlx5_fpga_tls_send_teardown_cmd(mdev, flow, swid, flags);
++}
++
++enum mlx5_fpga_setup_stream_status {
++	MLX5_FPGA_CMD_PENDING,
++	MLX5_FPGA_CMD_SEND_FAILED,
++	MLX5_FPGA_CMD_RESPONSE_RECEIVED,
++	MLX5_FPGA_CMD_ABANDONED,
++};
++
++struct mlx5_setup_stream_context {
++	struct mlx5_fpga_tls_command_context cmd;
++	atomic_t status;
++	u32 syndrome;
++	struct completion comp;
++};
++
++static void
++mlx5_fpga_tls_setup_completion(struct mlx5_fpga_conn *conn,
++			       struct mlx5_fpga_device *fdev,
++			       struct mlx5_fpga_tls_command_context *cmd,
++			       struct mlx5_fpga_dma_buf *resp)
++{
++	struct mlx5_setup_stream_context *ctx =
++	    container_of(cmd, struct mlx5_setup_stream_context, cmd);
++	int status = MLX5_FPGA_CMD_SEND_FAILED;
++	void *tls_cmd = ctx + 1;
++
++	/* If we failed to send to command resp == NULL */
++	if (resp) {
++		ctx->syndrome = MLX5_GET(tls_resp, resp->sg[0].data, syndrome);
++		status = MLX5_FPGA_CMD_RESPONSE_RECEIVED;
++	}
++
++	status = atomic_xchg_release(&ctx->status, status);
++	if (likely(status != MLX5_FPGA_CMD_ABANDONED)) {
++		complete(&ctx->comp);
++		return;
++	}
++
++	mlx5_fpga_err(fdev, "Command was abandoned, syndrome = %u\n",
++		      ctx->syndrome);
++
++	if (!ctx->syndrome) {
++		/* The process was killed while waiting for the context to be
++		 * added, and the add completed successfully.
++		 * We need to destroy the HW context, and we can't can't reuse
++		 * the command context because we might not have received
++		 * the tx completion yet.
++		 */
++		mlx5_fpga_tls_del_flow(fdev->mdev,
++				       MLX5_GET(tls_cmd, tls_cmd, swid),
++				       GFP_ATOMIC,
++				       MLX5_GET(tls_cmd, tls_cmd,
++						direction_sx));
++	}
++
++	mlx5_fpga_tls_put_command_ctx(cmd);
++}
++
++static int mlx5_fpga_tls_setup_stream_cmd(struct mlx5_core_dev *mdev,
++					  struct mlx5_setup_stream_context *ctx)
++{
++	struct mlx5_fpga_dma_buf *buf;
++	void *cmd = ctx + 1;
++	int status, ret = 0;
++
++	buf = &ctx->cmd.buf;
++	buf->sg[0].data = cmd;
++	buf->sg[0].size = MLX5_TLS_COMMAND_SIZE;
++	MLX5_SET(tls_cmd, cmd, command_type, CMD_SETUP_STREAM);
++
++	init_completion(&ctx->comp);
++	atomic_set(&ctx->status, MLX5_FPGA_CMD_PENDING);
++	ctx->syndrome = -1;
++
++	mlx5_fpga_tls_cmd_send(mdev->fpga, &ctx->cmd,
++			       mlx5_fpga_tls_setup_completion);
++	wait_for_completion_killable(&ctx->comp);
++
++	status = atomic_xchg_acquire(&ctx->status, MLX5_FPGA_CMD_ABANDONED);
++	if (unlikely(status == MLX5_FPGA_CMD_PENDING))
++	/* ctx is going to be released in mlx5_fpga_tls_setup_completion */
++		return -EINTR;
++
++	if (unlikely(ctx->syndrome))
++		ret = -ENOMEM;
++
++	mlx5_fpga_tls_put_command_ctx(&ctx->cmd);
++	return ret;
++}
++
++static void mlx5_fpga_tls_hw_qp_recv_cb(void *cb_arg,
++					struct mlx5_fpga_dma_buf *buf)
++{
++	struct mlx5_fpga_device *fdev = (struct mlx5_fpga_device *)cb_arg;
++
++	mlx5_fpga_tls_cmd_complete(fdev, buf);
++}
++
++bool mlx5_fpga_is_tls_device(struct mlx5_core_dev *mdev)
++{
++	if (!mdev->fpga || !MLX5_CAP_GEN(mdev, fpga))
++		return false;
++
++	if (MLX5_CAP_FPGA(mdev, ieee_vendor_id) !=
++	    MLX5_FPGA_CAP_SANDBOX_VENDOR_ID_MLNX)
++		return false;
++
++	if (MLX5_CAP_FPGA(mdev, sandbox_product_id) !=
++	    MLX5_FPGA_CAP_SANDBOX_PRODUCT_ID_TLS)
++		return false;
++
++	if (MLX5_CAP_FPGA(mdev, sandbox_product_version) != 0)
++		return false;
++
++	return true;
++}
++
++static int mlx5_fpga_tls_get_caps(struct mlx5_fpga_device *fdev,
++				  u32 *p_caps)
++{
++	int err, cap_size = MLX5_ST_SZ_BYTES(tls_extended_cap);
++	u32 caps = 0;
++	void *buf;
++
++	buf = kzalloc(cap_size, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	err = mlx5_fpga_get_sbu_caps(fdev, cap_size, buf);
++	if (err)
++		goto out;
++
++	if (MLX5_GET(tls_extended_cap, buf, tx))
++		caps |= MLX5_ACCEL_TLS_TX;
++	if (MLX5_GET(tls_extended_cap, buf, rx))
++		caps |= MLX5_ACCEL_TLS_RX;
++	if (MLX5_GET(tls_extended_cap, buf, tls_v12))
++		caps |= MLX5_ACCEL_TLS_V12;
++	if (MLX5_GET(tls_extended_cap, buf, tls_v13))
++		caps |= MLX5_ACCEL_TLS_V13;
++	if (MLX5_GET(tls_extended_cap, buf, lro))
++		caps |= MLX5_ACCEL_TLS_LRO;
++	if (MLX5_GET(tls_extended_cap, buf, ipv6))
++		caps |= MLX5_ACCEL_TLS_IPV6;
++
++	if (MLX5_GET(tls_extended_cap, buf, aes_gcm_128))
++		caps |= MLX5_ACCEL_TLS_AES_GCM128;
++	if (MLX5_GET(tls_extended_cap, buf, aes_gcm_256))
++		caps |= MLX5_ACCEL_TLS_AES_GCM256;
++
++	*p_caps = caps;
++	err = 0;
++out:
++	kfree(buf);
++	return err;
++}
++
++int mlx5_fpga_tls_init(struct mlx5_core_dev *mdev)
++{
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++	struct mlx5_fpga_conn_attr init_attr = {0};
++	struct mlx5_fpga_conn *conn;
++	struct mlx5_fpga_tls *tls;
++	int err = 0;
++
++	if (!mlx5_fpga_is_tls_device(mdev) || !fdev)
++		return 0;
++
++	tls = kzalloc(sizeof(*tls), GFP_KERNEL);
++	if (!tls)
++		return -ENOMEM;
++
++	err = mlx5_fpga_tls_get_caps(fdev, &tls->caps);
++	if (err)
++		goto error;
++
++	if (!(tls->caps & (MLX5_ACCEL_TLS_V12 | MLX5_ACCEL_TLS_AES_GCM128))) {
++		err = -ENOTSUPP;
++		goto error;
++	}
++
++	init_attr.rx_size = SBU_QP_QUEUE_SIZE;
++	init_attr.tx_size = SBU_QP_QUEUE_SIZE;
++	init_attr.recv_cb = mlx5_fpga_tls_hw_qp_recv_cb;
++	init_attr.cb_arg = fdev;
++	conn = mlx5_fpga_sbu_conn_create(fdev, &init_attr);
++	if (IS_ERR(conn)) {
++		err = PTR_ERR(conn);
++		mlx5_fpga_err(fdev, "Error creating TLS command connection %d\n",
++			      err);
++		goto error;
++	}
++
++	tls->conn = conn;
++	spin_lock_init(&tls->pending_cmds_lock);
++	INIT_LIST_HEAD(&tls->pending_cmds);
++
++	idr_init(&tls->tx_idr);
++	idr_init(&tls->rx_idr);
++	spin_lock_init(&tls->tx_idr_spinlock);
++	spin_lock_init(&tls->rx_idr_spinlock);
++	fdev->tls = tls;
++	return 0;
++
++error:
++	kfree(tls);
++	return err;
++}
++
++void mlx5_fpga_tls_cleanup(struct mlx5_core_dev *mdev)
++{
++	struct mlx5_fpga_device *fdev = mdev->fpga;
++
++	if (!fdev || !fdev->tls)
++		return;
++
++	mlx5_fpga_sbu_conn_destroy(fdev->tls->conn);
++	kfree(fdev->tls);
++	fdev->tls = NULL;
++}
++
++static void mlx5_fpga_tls_set_aes_gcm128_ctx(void *cmd,
++					     struct tls_crypto_info *info,
++					     __be64 *rcd_sn)
++{
++	struct tls12_crypto_info_aes_gcm_128 *crypto_info =
++	    (struct tls12_crypto_info_aes_gcm_128 *)info;
++
++	memcpy(MLX5_ADDR_OF(tls_cmd, cmd, tls_rcd_sn), crypto_info->rec_seq,
++	       TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE);
++
++	memcpy(MLX5_ADDR_OF(tls_cmd, cmd, tls_implicit_iv),
++	       crypto_info->salt, TLS_CIPHER_AES_GCM_128_SALT_SIZE);
++	memcpy(MLX5_ADDR_OF(tls_cmd, cmd, encryption_key),
++	       crypto_info->key, TLS_CIPHER_AES_GCM_128_KEY_SIZE);
++
++	/* in AES-GCM 128 we need to write the key twice */
++	memcpy(MLX5_ADDR_OF(tls_cmd, cmd, encryption_key) +
++		   TLS_CIPHER_AES_GCM_128_KEY_SIZE,
++	       crypto_info->key, TLS_CIPHER_AES_GCM_128_KEY_SIZE);
++
++	MLX5_SET(tls_cmd, cmd, alg, MLX5_TLS_ALG_AES_GCM_128);
++}
++
++static int mlx5_fpga_tls_set_key_material(void *cmd, u32 caps,
++					  struct tls_crypto_info *crypto_info)
++{
++	__be64 rcd_sn;
++
++	switch (crypto_info->cipher_type) {
++	case TLS_CIPHER_AES_GCM_128:
++		if (!(caps & MLX5_ACCEL_TLS_AES_GCM128))
++			return -EINVAL;
++		mlx5_fpga_tls_set_aes_gcm128_ctx(cmd, crypto_info, &rcd_sn);
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int _mlx5_fpga_tls_add_flow(struct mlx5_core_dev *mdev, void *flow,
++				   struct tls_crypto_info *crypto_info,
++				   u32 swid, u32 tcp_sn)
++{
++	u32 caps = mlx5_fpga_tls_device_caps(mdev);
++	struct mlx5_setup_stream_context *ctx;
++	int ret = -ENOMEM;
++	size_t cmd_size;
++	void *cmd;
++
++	cmd_size = MLX5_TLS_COMMAND_SIZE + sizeof(*ctx);
++	ctx = kzalloc(cmd_size, GFP_KERNEL);
++	if (!ctx)
++		goto out;
++
++	cmd = ctx + 1;
++	ret = mlx5_fpga_tls_set_key_material(cmd, caps, crypto_info);
++	if (ret)
++		goto free_ctx;
++
++	mlx5_fpga_tls_flow_to_cmd(flow, cmd);
++
++	MLX5_SET(tls_cmd, cmd, swid, swid);
++	MLX5_SET(tls_cmd, cmd, tcp_sn, tcp_sn);
++
++	return mlx5_fpga_tls_setup_stream_cmd(mdev, ctx);
++
++free_ctx:
++	kfree(ctx);
++out:
++	return ret;
++}
++
++int mlx5_fpga_tls_add_flow(struct mlx5_core_dev *mdev, void *flow,
++			   struct tls_crypto_info *crypto_info,
++			   u32 start_offload_tcp_sn, u32 *p_swid,
++			   bool direction_sx)
++{
++	struct mlx5_fpga_tls *tls = mdev->fpga->tls;
++	int ret = -ENOMEM;
++	u32 swid;
++
++	if (direction_sx)
++		ret = mlx5_fpga_tls_alloc_swid(&tls->tx_idr,
++					       &tls->tx_idr_spinlock, flow);
++	else
++		ret = mlx5_fpga_tls_alloc_swid(&tls->rx_idr,
++					       &tls->rx_idr_spinlock, flow);
++
++	if (ret < 0)
++		return ret;
++
++	swid = ret;
++	MLX5_SET(tls_flow, flow, direction_sx, direction_sx ? 1 : 0);
++
++	ret = _mlx5_fpga_tls_add_flow(mdev, flow, crypto_info, swid,
++				      start_offload_tcp_sn);
++	if (ret && ret != -EINTR)
++		goto free_swid;
++
++	*p_swid = swid;
++	return 0;
++free_swid:
++	if (direction_sx)
++		mlx5_fpga_tls_release_swid(&tls->tx_idr,
++					   &tls->tx_idr_spinlock, swid);
++	else
++		mlx5_fpga_tls_release_swid(&tls->rx_idr,
++					   &tls->rx_idr_spinlock, swid);
++
++	return ret;
++}
++
++#endif
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.h b/drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.h
+new file mode 100644
+index 0000000..c8cda1a
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.h
+@@ -0,0 +1,83 @@
++/*
++ * Copyright (c) 2018 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#ifdef HAVE_UAPI_LINUX_TLS_H
++
++#ifndef __MLX5_FPGA_TLS_H__
++#define __MLX5_FPGA_TLS_H__
++
++#include <linux/mlx5/driver.h>
++
++#ifdef HAVE_NET_TLS_H
++#include <net/tls.h>
++#else
++#include <uapi/linux/tls.h>
++#endif
++
++#include "fpga/core.h"
++
++struct mlx5_fpga_tls {
++	struct list_head pending_cmds;
++	spinlock_t pending_cmds_lock; /* Protects pending_cmds */
++	u32 caps;
++	struct mlx5_fpga_conn *conn;
++
++	struct idr tx_idr;
++	struct idr rx_idr;
++	spinlock_t tx_idr_spinlock; /* protects the IDR */
++	spinlock_t rx_idr_spinlock; /* protects the IDR */
++};
++
++int mlx5_fpga_tls_add_flow(struct mlx5_core_dev *mdev, void *flow,
++			   struct tls_crypto_info *crypto_info,
++			   u32 start_offload_tcp_sn, u32 *p_swid,
++			   bool direction_sx);
++
++void mlx5_fpga_tls_del_flow(struct mlx5_core_dev *mdev, u32 swid,
++			    gfp_t flags, bool direction_sx);
++
++bool mlx5_fpga_is_tls_device(struct mlx5_core_dev *mdev);
++int mlx5_fpga_tls_init(struct mlx5_core_dev *mdev);
++void mlx5_fpga_tls_cleanup(struct mlx5_core_dev *mdev);
++
++static inline u32 mlx5_fpga_tls_device_caps(struct mlx5_core_dev *mdev)
++{
++	return mdev->fpga->tls->caps;
++}
++
++int mlx5_fpga_tls_resync_rx(struct mlx5_core_dev *mdev, __be32 handle,
++			    u32 seq, __be64 rcd_sn);
++
++#endif /* __MLX5_FPGA_TLS_H__ */
++
++#endif /* HAVE_UAPI_LINUX_TLS_H */
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/trans.c b/drivers/net/ethernet/mellanox/mlx5/core/fpga/trans.c
+new file mode 100644
+index 0000000..b72c845
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/trans.c
+@@ -0,0 +1,330 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#include "fpga/trans.h"
++#include "fpga/conn.h"
++
++enum mlx5_fpga_transaction_state {
++	TRANS_STATE_NONE,
++	TRANS_STATE_SEND,
++	TRANS_STATE_WAIT,
++	TRANS_STATE_COMPLETE,
++};
++
++struct mlx5_fpga_trans_priv {
++	const struct mlx5_fpga_transaction *user_trans;
++	u8 tid;
++	enum mlx5_fpga_transaction_state state;
++	u8 status;
++	u32 header[MLX5_ST_SZ_DW(fpga_shell_qp_packet)];
++	struct mlx5_fpga_dma_buf buf;
++	struct list_head list_item;
++};
++
++struct mlx5_fpga_trans_device_state {
++	spinlock_t lock; /* Protects all members of this struct */
++	struct list_head free_queue;
++	struct mlx5_fpga_trans_priv transactions[MLX5_FPGA_TID_COUNT];
++};
++
++static struct mlx5_fpga_trans_priv *find_tid(struct mlx5_fpga_device *fdev,
++					     u8 tid)
++{
++	if (tid >= MLX5_FPGA_TID_COUNT) {
++		mlx5_fpga_warn(fdev, "Unexpected transaction ID %u\n", tid);
++		return NULL;
++	}
++	return &fdev->trans->transactions[tid];
++}
++
++static struct mlx5_fpga_trans_priv *alloc_tid(struct mlx5_fpga_device *fdev)
++{
++	struct mlx5_fpga_trans_priv *ret;
++	unsigned long flags;
++
++	spin_lock_irqsave(&fdev->trans->lock, flags);
++
++	if (list_empty(&fdev->trans->free_queue)) {
++		mlx5_fpga_dbg(fdev, "No free transaction ID available\n");
++		ret = NULL;
++		goto out;
++	}
++
++	ret = list_first_entry(&fdev->trans->free_queue,
++			       struct mlx5_fpga_trans_priv, list_item);
++	list_del(&ret->list_item);
++
++	ret->state = TRANS_STATE_NONE;
++out:
++	spin_unlock_irqrestore(&fdev->trans->lock, flags);
++	return ret;
++}
++
++static void free_tid(struct mlx5_fpga_device *fdev,
++		     struct mlx5_fpga_trans_priv *trans_priv)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&fdev->trans->lock, flags);
++	list_add_tail(&trans_priv->list_item, &fdev->trans->free_queue);
++	spin_unlock_irqrestore(&fdev->trans->lock, flags);
++}
++
++static void trans_complete(struct mlx5_fpga_device *fdev,
++			   struct mlx5_fpga_trans_priv *trans_priv, u8 status)
++{
++	const struct mlx5_fpga_transaction *user_trans;
++	unsigned long flags;
++
++	mlx5_fpga_dbg(fdev, "Transaction %u is complete with status %u\n",
++		      trans_priv->tid, status);
++
++	spin_lock_irqsave(&fdev->trans->lock, flags);
++	trans_priv->state = TRANS_STATE_COMPLETE;
++	trans_priv->status = status;
++	spin_unlock_irqrestore(&fdev->trans->lock, flags);
++
++	user_trans = trans_priv->user_trans;
++	free_tid(fdev, trans_priv);
++
++	if (user_trans->complete)
++		user_trans->complete(user_trans, status);
++}
++
++static void trans_send_complete(struct mlx5_fpga_conn *conn,
++				struct mlx5_fpga_device *fdev,
++				struct mlx5_fpga_dma_buf *buf, u8 status)
++{
++	unsigned long flags;
++	struct mlx5_fpga_trans_priv *trans_priv;
++
++	trans_priv = container_of(buf, struct mlx5_fpga_trans_priv, buf);
++	mlx5_fpga_dbg(fdev, "send complete tid %u. Status: %u\n",
++		      trans_priv->tid, status);
++	if (status) {
++		trans_complete(fdev, trans_priv, status);
++		return;
++	}
++
++	spin_lock_irqsave(&fdev->trans->lock, flags);
++	if (trans_priv->state == TRANS_STATE_SEND)
++		trans_priv->state = TRANS_STATE_WAIT;
++	spin_unlock_irqrestore(&fdev->trans->lock, flags);
++}
++
++static int trans_validate(struct mlx5_fpga_device *fdev, u64 addr, size_t size)
++{
++	if (size > MLX5_FPGA_TRANSACTION_MAX_SIZE) {
++		mlx5_fpga_warn(fdev, "Cannot access %zu bytes at once. Max is %u\n",
++			       size, MLX5_FPGA_TRANSACTION_MAX_SIZE);
++		return -EINVAL;
++	}
++	if (size & MLX5_FPGA_TRANSACTION_SEND_ALIGN_BITS) {
++		mlx5_fpga_warn(fdev, "Cannot access %zu bytes. Must be full dwords\n",
++			       size);
++		return -EINVAL;
++	}
++	if (size < 1) {
++		mlx5_fpga_warn(fdev, "Cannot access %zu bytes. Empty transaction not allowed\n",
++			       size);
++		return -EINVAL;
++	}
++	if (addr & MLX5_FPGA_TRANSACTION_SEND_ALIGN_BITS) {
++		mlx5_fpga_warn(fdev, "Cannot access %zu bytes at unaligned address %llx\n",
++			       size, addr);
++		return -EINVAL;
++	}
++	if ((addr >> MLX5_FPGA_TRANSACTION_SEND_PAGE_BITS) !=
++	    ((addr + size - 1) >> MLX5_FPGA_TRANSACTION_SEND_PAGE_BITS)) {
++		mlx5_fpga_warn(fdev, "Cannot access %zu bytes at address %llx. Crosses page boundary\n",
++			       size, addr);
++		return -EINVAL;
++	}
++	if (addr < mlx5_fpga_ddr_base_get(fdev)) {
++		if (size != sizeof(u32)) {
++			mlx5_fpga_warn(fdev, "Cannot access %zu bytes at cr-space address %llx. Must access a single dword\n",
++				       size, addr);
++			return -EINVAL;
++		}
++	}
++	return 0;
++}
++
++int mlx5_fpga_trans_exec(const struct mlx5_fpga_transaction *trans)
++{
++	struct mlx5_fpga_conn *conn = trans->conn;
++	struct mlx5_fpga_trans_priv *trans_priv;
++	u32 *header;
++	int err;
++
++	if (!trans->complete) {
++		mlx5_fpga_warn(conn->fdev, "Transaction must have a completion callback\n");
++		err = -EINVAL;
++		goto out;
++	}
++
++	err = trans_validate(conn->fdev, trans->addr, trans->size);
++	if (err)
++		goto out;
++
++	trans_priv = alloc_tid(conn->fdev);
++	if (!trans_priv) {
++		err = -EBUSY;
++		goto out;
++	}
++	trans_priv->user_trans = trans;
++	header = trans_priv->header;
++
++	memset(header, 0, sizeof(trans_priv->header));
++	memset(&trans_priv->buf, 0, sizeof(trans_priv->buf));
++	MLX5_SET(fpga_shell_qp_packet, header, type,
++		 (trans->direction == MLX5_FPGA_WRITE) ?
++		 MLX5_FPGA_SHELL_QP_PACKET_TYPE_DDR_WRITE :
++		 MLX5_FPGA_SHELL_QP_PACKET_TYPE_DDR_READ);
++	MLX5_SET(fpga_shell_qp_packet, header, tid, trans_priv->tid);
++	MLX5_SET(fpga_shell_qp_packet, header, len, trans->size);
++	MLX5_SET64(fpga_shell_qp_packet, header, address, trans->addr);
++
++	trans_priv->buf.sg[0].data = header;
++	trans_priv->buf.sg[0].size = sizeof(trans_priv->header);
++	if (trans->direction == MLX5_FPGA_WRITE) {
++		trans_priv->buf.sg[1].data = trans->data;
++		trans_priv->buf.sg[1].size = trans->size;
++	}
++
++	trans_priv->buf.complete = trans_send_complete;
++	trans_priv->state = TRANS_STATE_SEND;
++
++	err = mlx5_fpga_conn_send(conn->fdev->shell_conn, &trans_priv->buf);
++	if (err)
++		goto out_buf_tid;
++	goto out;
++
++out_buf_tid:
++	free_tid(conn->fdev, trans_priv);
++out:
++	return err;
++}
++
++void mlx5_fpga_trans_recv(void *cb_arg, struct mlx5_fpga_dma_buf *buf)
++{
++	struct mlx5_fpga_device *fdev = cb_arg;
++	struct mlx5_fpga_trans_priv *trans_priv;
++	size_t payload_len;
++	u8 status = 0;
++	u8 tid, type;
++
++	mlx5_fpga_dbg(fdev, "Rx QP message on core conn; %u bytes\n",
++		      buf->sg[0].size);
++
++	if (buf->sg[0].size < MLX5_ST_SZ_BYTES(fpga_shell_qp_packet)) {
++		mlx5_fpga_warn(fdev, "Short message %u bytes from device\n",
++			       buf->sg[0].size);
++		goto out;
++	}
++	payload_len = buf->sg[0].size - MLX5_ST_SZ_BYTES(fpga_shell_qp_packet);
++
++	tid = MLX5_GET(fpga_shell_qp_packet, buf->sg[0].data, tid);
++	trans_priv = find_tid(fdev, tid);
++	if (!trans_priv)
++		goto out;
++
++	type = MLX5_GET(fpga_shell_qp_packet, buf->sg[0].data, type);
++	switch (type) {
++	case MLX5_FPGA_SHELL_QP_PACKET_TYPE_DDR_READ_RESPONSE:
++		if (trans_priv->user_trans->direction != MLX5_FPGA_READ) {
++			mlx5_fpga_warn(fdev, "Wrong answer type %u to a %u transaction\n",
++				       type, trans_priv->user_trans->direction);
++			status = -EIO;
++			goto complete;
++		}
++		if (payload_len != trans_priv->user_trans->size) {
++			mlx5_fpga_warn(fdev, "Incorrect transaction payload length %zu expected %zu\n",
++				       payload_len,
++				       trans_priv->user_trans->size);
++			goto complete;
++		}
++		memcpy(trans_priv->user_trans->data,
++		       MLX5_ADDR_OF(fpga_shell_qp_packet, buf->sg[0].data,
++				    data), payload_len);
++		break;
++	case MLX5_FPGA_SHELL_QP_PACKET_TYPE_DDR_WRITE_RESPONSE:
++		if (trans_priv->user_trans->direction != MLX5_FPGA_WRITE) {
++			mlx5_fpga_warn(fdev, "Wrong answer type %u to a %u transaction\n",
++				       type, trans_priv->user_trans->direction);
++			status = -EIO;
++			goto complete;
++		}
++		break;
++	default:
++		mlx5_fpga_warn(fdev, "Unexpected message type %u len %u from device\n",
++			       type, buf->sg[0].size);
++		status = -EIO;
++		goto complete;
++	}
++
++complete:
++	trans_complete(fdev, trans_priv, status);
++out:
++	return;
++}
++
++int mlx5_fpga_trans_device_init(struct mlx5_fpga_device *fdev)
++{
++	int ret = 0;
++	int tid;
++
++	fdev->trans = kzalloc(sizeof(*fdev->trans), GFP_KERNEL);
++	if (!fdev->trans) {
++		ret = -ENOMEM;
++		goto out;
++	}
++
++	INIT_LIST_HEAD(&fdev->trans->free_queue);
++	for (tid = 0; tid < ARRAY_SIZE(fdev->trans->transactions); tid++) {
++		fdev->trans->transactions[tid].tid = tid;
++		list_add_tail(&fdev->trans->transactions[tid].list_item,
++			      &fdev->trans->free_queue);
++	}
++
++	spin_lock_init(&fdev->trans->lock);
++
++out:
++	return ret;
++}
++
++void mlx5_fpga_trans_device_cleanup(struct mlx5_fpga_device *fdev)
++{
++	kfree(fdev->trans);
++}
++
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/trans.h b/drivers/net/ethernet/mellanox/mlx5/core/fpga/trans.h
+new file mode 100644
+index 0000000..07eebb2
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/trans.h
+@@ -0,0 +1,65 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#ifndef __MLX5_FPGA_TRANS_H__
++#define __MLX5_FPGA_TRANS_H__
++
++#include "fpga/sdk.h"
++#include "fpga/core.h"
++
++#define MLX5_FPGA_TRANSACTION_MAX_SIZE 1008
++#define MLX5_FPGA_TRANSACTION_SEND_ALIGN_BITS 3
++#define MLX5_FPGA_TRANSACTION_SEND_PAGE_BITS 12
++#define MLX5_FPGA_TID_COUNT 256
++
++enum mlx5_fpga_direction {
++	MLX5_FPGA_READ,
++	MLX5_FPGA_WRITE,
++};
++
++struct mlx5_fpga_transaction {
++	struct mlx5_fpga_conn *conn;
++	enum mlx5_fpga_direction direction;
++	size_t size;
++	u64 addr;
++	u8 *data;
++	void (*complete)(const struct mlx5_fpga_transaction *complete,
++			 u8 status);
++};
++
++int mlx5_fpga_trans_device_init(struct mlx5_fpga_device *fdev);
++void mlx5_fpga_trans_device_cleanup(struct mlx5_fpga_device *fdev);
++int mlx5_fpga_trans_exec(const struct mlx5_fpga_transaction *trans);
++void mlx5_fpga_trans_recv(void *cb_arg, struct mlx5_fpga_dma_buf *buf);
++
++#endif /* __MLX_FPGA_TRANS_H__ */
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/xfer.c b/drivers/net/ethernet/mellanox/mlx5/core/fpga/xfer.c
+new file mode 100644
+index 0000000..810cf81
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/xfer.c
+@@ -0,0 +1,243 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#include "fpga/xfer.h"
++#include "fpga/conn.h"
++
++struct xfer_state {
++	const struct mlx5_fpga_transaction *xfer;
++	/* Total transactions */
++	unsigned int start_count;
++	unsigned int done_count;
++	unsigned int error_count;
++	u8 status;
++	/* Inflight transactions */
++	unsigned int budget;
++	unsigned int inflight_count;
++	/* Chunking state */
++	size_t pos;
++	spinlock_t lock; /* Protects all members of this struct */
++};
++
++struct xfer_transaction {
++	struct xfer_state *xfer_state;
++	struct mlx5_fpga_transaction transaction;
++};
++
++static void trans_complete(const struct mlx5_fpga_transaction *complete,
++			   u8 status);
++
++static void xfer_complete(struct xfer_state *xfer_state)
++{
++	const struct mlx5_fpga_transaction *xfer = xfer_state->xfer;
++	u8 status = xfer_state->status;
++
++	kfree(xfer_state);
++	xfer->complete(xfer, status);
++}
++
++/* Xfer state spin lock must be locked */
++static int exec_more(struct xfer_state *xfer_state)
++{
++	struct xfer_transaction *xfer_trans;
++	size_t left, cur_size, page_size;
++	u64 pos_addr, ddr_base;
++	u8 *pos_data;
++	int ret = 0;
++
++	ddr_base = mlx5_fpga_ddr_base_get(xfer_state->xfer->conn->fdev);
++	page_size = (xfer_state->xfer->addr + xfer_state->pos < ddr_base) ?
++		    sizeof(u32) : (1 << MLX5_FPGA_TRANSACTION_SEND_PAGE_BITS);
++
++	do {
++		if (xfer_state->status != IB_WC_SUCCESS) {
++			ret = -EIO;
++			break;
++		}
++
++		left = xfer_state->xfer->size - xfer_state->pos;
++		if (!left)
++			break;
++
++		xfer_trans = kzalloc(sizeof(*xfer_trans), GFP_ATOMIC);
++		if (!xfer_trans) {
++			ret = -ENOMEM;
++			break;
++		}
++
++		pos_addr = xfer_state->xfer->addr + xfer_state->pos;
++		pos_data = xfer_state->xfer->data + xfer_state->pos;
++
++		/* Determine largest possible transaction at this point */
++		cur_size = page_size - (pos_addr & (page_size - 1));
++		if (cur_size > MLX5_FPGA_TRANSACTION_MAX_SIZE)
++			cur_size = MLX5_FPGA_TRANSACTION_MAX_SIZE;
++		if (cur_size > left)
++			cur_size = left;
++
++		xfer_trans->xfer_state = xfer_state;
++		xfer_trans->transaction.addr = pos_addr;
++		xfer_trans->transaction.complete = trans_complete;
++		xfer_trans->transaction.conn = xfer_state->xfer->conn;
++		xfer_trans->transaction.data = pos_data;
++		xfer_trans->transaction.direction = xfer_state->xfer->direction;
++		xfer_trans->transaction.size = cur_size;
++
++		xfer_state->start_count++;
++		xfer_state->inflight_count++;
++		mlx5_fpga_dbg(xfer_state->xfer->conn->fdev, "Starting %zu bytes at %p done; %u started %u inflight %u done %u error\n",
++			      xfer_trans->transaction.size,
++			      xfer_trans->transaction.data,
++			      xfer_state->start_count,
++			      xfer_state->inflight_count,
++			      xfer_state->done_count,
++			      xfer_state->error_count);
++		ret = mlx5_fpga_trans_exec(&xfer_trans->transaction);
++		if (ret) {
++			xfer_state->start_count--;
++			xfer_state->inflight_count--;
++			if (ret == -EBUSY)
++				ret = 0;
++
++			if (ret) {
++				mlx5_fpga_warn(xfer_state->xfer->conn->fdev, "Transfer failed to start transaction: %d. %u started %u done %u error\n",
++					       ret, xfer_state->start_count,
++					       xfer_state->done_count,
++					       xfer_state->error_count);
++				xfer_state->status = IB_WC_GENERAL_ERR;
++			}
++			kfree(xfer_trans);
++			break;
++		}
++		xfer_state->pos += cur_size;
++		if (xfer_state->inflight_count >= xfer_state->budget)
++			break;
++	} while (cur_size != left);
++
++	return ret;
++}
++
++static void trans_complete(const struct mlx5_fpga_transaction *complete,
++			   u8 status)
++{
++	struct xfer_transaction *xfer_trans;
++	struct xfer_state *xfer_state;
++	unsigned long flags;
++	bool done = false;
++	int ret;
++
++	xfer_trans = container_of(complete, struct xfer_transaction,
++				  transaction);
++	xfer_state = xfer_trans->xfer_state;
++	mlx5_fpga_dbg(complete->conn->fdev, "Transaction %zu bytes at %p done, status %u; %u started %u inflight %u done %u error\n",
++		      xfer_trans->transaction.size,
++		      xfer_trans->transaction.data, status,
++		      xfer_state->start_count, xfer_state->inflight_count,
++		      xfer_state->done_count, xfer_state->error_count);
++	kfree(xfer_trans);
++
++	spin_lock_irqsave(&xfer_state->lock, flags);
++
++	if (status != IB_WC_SUCCESS) {
++		xfer_state->error_count++;
++		mlx5_fpga_warn(complete->conn->fdev, "Transaction failed during transfer. %u started %u inflight %u done %u error\n",
++			       xfer_state->start_count,
++			       xfer_state->inflight_count,
++			       xfer_state->done_count, xfer_state->error_count);
++		if (xfer_state->status == IB_WC_SUCCESS)
++			xfer_state->status = status;
++	} else {
++		xfer_state->done_count++;
++	}
++	ret = exec_more(xfer_state);
++
++	xfer_state->inflight_count--;
++	if (!xfer_state->inflight_count)
++		done = true;
++
++	spin_unlock_irqrestore(&xfer_state->lock, flags);
++
++	if (done)
++		xfer_complete(xfer_state);
++}
++
++int mlx5_fpga_xfer_exec(const struct mlx5_fpga_transaction *xfer)
++{
++	u64 base = mlx5_fpga_ddr_base_get(xfer->conn->fdev);
++	u64 size = mlx5_fpga_ddr_size_get(xfer->conn->fdev);
++	struct xfer_state *xfer_state;
++	unsigned long flags;
++	bool done = false;
++	int ret = 0;
++
++	if (xfer->addr + xfer->size > base + size) {
++		mlx5_fpga_warn(xfer->conn->fdev, "Transfer ends at %llx outside of DDR range %llx\n",
++			       xfer->addr + xfer->size, base + size);
++		return -EINVAL;
++	}
++
++	if (xfer->addr & MLX5_FPGA_TRANSACTION_SEND_ALIGN_BITS) {
++		mlx5_fpga_warn(xfer->conn->fdev, "Transfer address %llx not aligned\n",
++			       xfer->addr);
++		return -EINVAL;
++	}
++
++	if (xfer->size & MLX5_FPGA_TRANSACTION_SEND_ALIGN_BITS) {
++		mlx5_fpga_warn(xfer->conn->fdev, "Transfer size %zu not aligned\n",
++			       xfer->size);
++		return -EINVAL;
++	}
++
++	if (xfer->size < 1) {
++		mlx5_fpga_warn(xfer->conn->fdev, "Empty transfer size %zu not allowed\n",
++			       xfer->size);
++		return -EINVAL;
++	}
++
++	xfer_state = kzalloc(sizeof(*xfer_state), GFP_KERNEL);
++	xfer_state->xfer = xfer;
++	xfer_state->status = IB_WC_SUCCESS;
++	xfer_state->budget = 7;
++	spin_lock_init(&xfer_state->lock);
++	spin_lock_irqsave(&xfer_state->lock, flags);
++
++	ret = exec_more(xfer_state);
++	if (ret && (xfer_state->start_count == 0))
++		done = true;
++
++	spin_unlock_irqrestore(&xfer_state->lock, flags);
++
++	if (done)
++		xfer_complete(xfer_state);
++	return ret;
++}
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fpga/xfer.h b/drivers/net/ethernet/mellanox/mlx5/core/fpga/xfer.h
+new file mode 100644
+index 0000000..45d2829
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/xfer.h
+@@ -0,0 +1,41 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#ifndef __MLX5_FPGA_XFER_H__
++#define __MLX5_FPGA_XFER_H__
++
++#include "fpga/trans.h"
++
++int mlx5_fpga_xfer_exec(const struct mlx5_fpga_transaction *xfer);
++
++#endif /* __MLX5_FPGA_XFER_H__ */
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/main.c b/drivers/net/ethernet/mellanox/mlx5/core/main.c
+index 2c2e080..60a2737 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/main.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/main.c
+@@ -77,7 +77,7 @@
+ #include "lag/lag.h"
+ 
+ MODULE_AUTHOR("Eli Cohen <eli@mellanox.com>");
+-MODULE_DESCRIPTION("Mellanox 5th generation network adapters (ConnectX series) core driver");
++MODULE_DESCRIPTION("Patched for Innova2 by Kcc, Mellanox 5th generation network adapters (ConnectX series) core driver");
+ MODULE_LICENSE("Dual BSD/GPL");
+ MODULE_VERSION(DRIVER_VERSION);
+ MODULE_INFO(basedon, "Korg 6.8-rc4");
+diff --git a/drivers/net/ethernet/mellanox/mlx5/fpga/Kconfig b/drivers/net/ethernet/mellanox/mlx5/fpga/Kconfig
+new file mode 100644
+index 0000000..f278a14
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/fpga/Kconfig
+@@ -0,0 +1,14 @@
++#
++# Mellanox accelerator tools driver configuration
++#
++
++config MLX5_FPGA_TOOLS
++	tristate "Mellanox Technologies Innova tools driver"
++	depends on MLX5_FPGA && MLX5_CORE
++	default n
++	---help---
++	  Provides a usermode interface of a char device which allows access to
++	  the FPGA chip on Mellanox Technologies Innova family of network cards.
++	  This driver is required for burning FPGA logic images using the mlx_fpga
++	  tool.
++
+diff --git a/drivers/net/ethernet/mellanox/mlx5/fpga/Makefile b/drivers/net/ethernet/mellanox/mlx5/fpga/Makefile
+new file mode 100644
+index 0000000..4ce4607
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/fpga/Makefile
+@@ -0,0 +1,4 @@
++obj-$(CONFIG_MLX5_FPGA_TOOLS) += mlx5_fpga_tools.o
++
++ccflags-y += -I$(src)/../core
++mlx5_fpga_tools-y := main.o tools_char.o
+diff --git a/drivers/net/ethernet/mellanox/mlx5/fpga/main.c b/drivers/net/ethernet/mellanox/mlx5/fpga/main.c
+new file mode 100644
+index 0000000..5fca679
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/fpga/main.c
+@@ -0,0 +1,139 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#include <linux/module.h>
++#include "tools.h"
++#include "tools_char.h"
++
++MODULE_AUTHOR("Ilan Tayari <ilant@mellanox.com>");
++MODULE_DESCRIPTION("Mellanox Innova FPGA Tools Driver");
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_VERSION("0.1");
++
++static void mlx5_fpga_tools_create(struct mlx5_fpga_device *fdev);
++static int mlx5_fpga_tools_add(struct mlx5_fpga_device *fdev, u32 vid, u16 pid);
++static void mlx5_fpga_tools_remove(struct mlx5_fpga_device *fdev);
++static void mlx5_fpga_tools_destroy(struct mlx5_fpga_device *fdev);
++
++static struct mlx5_fpga_client mlx5_fpga_tools_client = {
++	.name = MLX5_FPGA_TOOLS_DRIVER_NAME,
++	.create = mlx5_fpga_tools_create,
++	.add = mlx5_fpga_tools_add,
++	.remove = mlx5_fpga_tools_remove,
++	.destroy = mlx5_fpga_tools_destroy,
++};
++
++struct mlx5_fpga_tools_dev *mlx5_fpga_tools_alloc(struct mlx5_fpga_device *fdev);
++
++struct mlx5_fpga_tools_dev *mlx5_fpga_tools_alloc(struct mlx5_fpga_device *fdev)
++{
++	int ret;
++	struct mlx5_fpga_tools_dev *tdev;
++
++	tdev = kzalloc(sizeof(*tdev), GFP_KERNEL);
++	if (!tdev)
++		goto out;
++
++	tdev->fdev = fdev;
++	mutex_init(&tdev->mutex);
++	ret = mlx5_fpga_tools_char_add_one(tdev);
++	if (ret)
++		goto err_free;
++
++	goto out;
++
++err_free:
++	kfree(tdev);
++	tdev = NULL;
++
++out:
++	return tdev;
++}
++
++static void mlx5_fpga_tools_free(struct mlx5_fpga_tools_dev *tdev)
++{
++	mlx5_fpga_tools_char_remove_one(tdev);
++	kfree(tdev);
++}
++
++static void mlx5_fpga_tools_create(struct mlx5_fpga_device *fdev)
++{
++	struct mlx5_fpga_tools_dev *dev = NULL;
++
++	dev_dbg(mlx5_fpga_dev(fdev), "tools_create\n");
++
++	dev = mlx5_fpga_tools_alloc(fdev);
++	if (!dev)
++		return;
++
++	mlx5_fpga_client_data_set(fdev, &mlx5_fpga_tools_client, dev);
++}
++
++static int mlx5_fpga_tools_add(struct mlx5_fpga_device *fdev, u32 vid, u16 pid)
++{
++	return 0;
++}
++
++static void mlx5_fpga_tools_remove(struct mlx5_fpga_device *fdev)
++{
++}
++
++static void mlx5_fpga_tools_destroy(struct mlx5_fpga_device *fdev)
++{
++	struct mlx5_fpga_tools_dev *dev;
++
++	dev_dbg(mlx5_fpga_dev(fdev), "tools_destroy\n");
++
++	dev = mlx5_fpga_client_data_get(fdev, &mlx5_fpga_tools_client);
++	if (dev)
++		mlx5_fpga_tools_free(dev);
++}
++
++static int __init mlx5_fpga_tools_init(void)
++{
++	int ret = mlx5_fpga_tools_char_init();
++
++	if (ret)
++		return ret;
++	mlx5_fpga_client_register(&mlx5_fpga_tools_client);
++	return 0;
++}
++
++static void __exit mlx5_fpga_tools_exit(void)
++{
++	mlx5_fpga_client_unregister(&mlx5_fpga_tools_client);
++	mlx5_fpga_tools_char_deinit();
++}
++
++module_init(mlx5_fpga_tools_init);
++module_exit(mlx5_fpga_tools_exit);
+diff --git a/drivers/net/ethernet/mellanox/mlx5/fpga/tools.h b/drivers/net/ethernet/mellanox/mlx5/fpga/tools.h
+new file mode 100644
+index 0000000..f21270e
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/fpga/tools.h
+@@ -0,0 +1,66 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#ifndef __TOOLS_H__
++#define __TOOLS_H__
++
++#include <linux/types.h>
++#include <linux/kobject.h>
++#include <linux/list.h>
++#include <linux/cdev.h>
++#include "fpga/sdk.h"
++
++#define MLX5_FPGA_TOOLS_DRIVER_NAME "mlx5_fpga_tools"
++
++struct mlx5_fpga_tools_dev {
++	/* Core device and connection to FPGA */
++	struct mlx5_fpga_device *fdev;
++
++	/* Serializes memory accesses */
++	struct mutex mutex;
++
++	/* Char device state */
++	struct cdev cdev;
++	dev_t dev;
++	struct device *char_device;
++	atomic_t open_count;
++};
++
++int mlx5_fpga_tools_mem_write(struct mlx5_fpga_tools_dev *tdev,
++			      void *buf, size_t count, u64 address,
++			      enum mlx5_fpga_access_type access_type);
++int mlx5_fpga_tools_mem_read(struct mlx5_fpga_tools_dev *tdev, void *buf,
++			     size_t count, u64 address,
++			     enum mlx5_fpga_access_type access_type);
++
++#endif	/* __TOOLS_H__ */
+diff --git a/drivers/net/ethernet/mellanox/mlx5/fpga/tools_char.c b/drivers/net/ethernet/mellanox/mlx5/fpga/tools_char.c
+new file mode 100644
+index 0000000..efa7298
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/fpga/tools_char.c
+@@ -0,0 +1,426 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/stat.h>
++#include <linux/fs.h>
++#include <uapi/linux/mlx5/fpga_tools.h>
++#include "tools_char.h"
++
++#define CHUNK_SIZE (128 * 1024)
++
++static struct class *char_class;
++static int major_number;
++struct ida minor_alloc;
++
++struct file_context {
++	struct mlx5_fpga_tools_dev *tdev;
++	enum mlx5_fpga_access_type access_type;
++};
++
++static int tools_char_open(struct inode *inodep, struct file *filep)
++{
++	struct mlx5_fpga_tools_dev *tdev;
++	struct file_context *context;
++
++	tdev = container_of(inodep->i_cdev, struct mlx5_fpga_tools_dev, cdev);
++	context = kzalloc(sizeof(*context), GFP_KERNEL);
++	context->tdev = tdev;
++	context->access_type = MLX5_FPGA_ACCESS_TYPE_DONTCARE;
++	filep->private_data = context;
++	atomic_inc(&tdev->open_count);
++	dev_dbg(mlx5_fpga_dev(tdev->fdev),
++		"tools char device opened %d times\n",
++		atomic_read(&tdev->open_count));
++	return 0;
++}
++
++static int tools_char_release(struct inode *inodep, struct file *filep)
++{
++	struct file_context *context = filep->private_data;
++
++	WARN_ON(atomic_read(&context->tdev->open_count) < 1);
++	atomic_dec(&context->tdev->open_count);
++	dev_dbg(mlx5_fpga_dev(context->tdev->fdev),
++		"tools char device closed. Still open %d times\n",
++		atomic_read(&context->tdev->open_count));
++	kfree(context);
++	return 0;
++}
++
++static int mem_read(struct mlx5_fpga_tools_dev *tdev, void *buf,
++		    size_t count, u64 address,
++		    enum mlx5_fpga_access_type access_type)
++{
++	int ret;
++
++	ret = mutex_lock_interruptible(&tdev->mutex);
++	if (ret)
++		goto out;
++
++	ret = mlx5_fpga_mem_read(tdev->fdev, count, address, buf, access_type);
++	if (ret < 0) {
++		dev_dbg(mlx5_fpga_dev(tdev->fdev),
++			"Failed to read %zu bytes at address 0x%llx: %d\n",
++			count, address, ret);
++		goto unlock;
++	}
++
++unlock:
++	mutex_unlock(&tdev->mutex);
++
++out:
++	return ret;
++}
++
++static int mem_write(struct mlx5_fpga_tools_dev *tdev, void *buf, size_t count,
++		     u64 address, enum mlx5_fpga_access_type access_type)
++{
++	int ret;
++
++	ret = mutex_lock_interruptible(&tdev->mutex);
++	if (ret)
++		goto out;
++
++	ret = mlx5_fpga_mem_write(tdev->fdev, count, address, buf, access_type);
++	if (ret < 0) {
++		dev_dbg(mlx5_fpga_dev(tdev->fdev),
++			"Failed to write %zu bytes at address 0x%llx: %d\n",
++			count, address, ret);
++		goto unlock;
++	}
++
++unlock:
++	mutex_unlock(&tdev->mutex);
++
++out:
++	return ret;
++}
++
++static ssize_t tools_char_read(struct file *filep, char __user *buffer,
++			       size_t len, loff_t *offset)
++{
++	int ret = 0;
++	void *kbuf = NULL;
++	struct file_context *context = filep->private_data;
++
++	dev_dbg(mlx5_fpga_dev(context->tdev->fdev),
++		"tools char device reading %zu bytes at 0x%llx\n",
++		len, *offset);
++
++	if (len < 1)
++		return len;
++	if (len > CHUNK_SIZE)
++		len = CHUNK_SIZE;
++
++	kbuf = kmalloc(len, GFP_KERNEL);
++	if (!kbuf) {
++		ret = -ENOMEM;
++		goto out;
++	}
++	ret = mem_read(context->tdev, kbuf, len, *offset, context->access_type);
++	if (ret <= 0)
++		goto out;
++	*offset += ret;
++	if (copy_to_user(buffer, kbuf, len)) {
++		dev_err(mlx5_fpga_dev(context->tdev->fdev),
++			"Failed to copy data to user buffer\n");
++		ret = -EFAULT;
++		goto out;
++	}
++out:
++	kfree(kbuf);
++	return ret;
++}
++
++static ssize_t tools_char_write(struct file *filep, const char __user *buffer,
++				size_t len, loff_t *offset)
++{
++	int ret = 0;
++	void *kbuf = NULL;
++	struct file_context *context = filep->private_data;
++
++	dev_dbg(mlx5_fpga_dev(context->tdev->fdev),
++		"tools char device writing %zu bytes at 0x%llx\n",
++		len, *offset);
++
++	if (len < 1)
++		return len;
++	if (len > CHUNK_SIZE)
++		len = CHUNK_SIZE;
++
++	kbuf = kmalloc(len, GFP_KERNEL);
++	if (!kbuf) {
++		ret = -ENOMEM;
++		goto out;
++	}
++	if (copy_from_user(kbuf, buffer, len)) {
++		dev_err(mlx5_fpga_dev(context->tdev->fdev),
++			"Failed to copy data from user buffer\n");
++		ret = -EFAULT;
++		goto out;
++	}
++
++	ret = mem_write(context->tdev, kbuf, len, *offset,
++			context->access_type);
++	if (ret <= 0)
++		goto out;
++	*offset += ret;
++out:
++	kfree(kbuf);
++	return ret;
++}
++
++static loff_t tools_char_llseek(struct file *filep, loff_t offset, int whence)
++{
++	loff_t new_offset;
++	struct file_context *context = filep->private_data;
++	u64 max = mlx5_fpga_ddr_base_get(context->tdev->fdev) +
++		  mlx5_fpga_ddr_size_get(context->tdev->fdev);
++	new_offset = fixed_size_llseek(filep, offset, whence, max);
++	if (new_offset >= 0)
++		dev_dbg(mlx5_fpga_dev(context->tdev->fdev),
++			"tools char device seeked to 0x%llx\n", new_offset);
++	return new_offset;
++}
++
++static long tools_char_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
++{
++	int err = 0;
++	struct file_context *context = filep->private_data;
++	struct mlx5_fpga_query query;
++	struct mlx5_fpga_temperature temperature;
++	enum mlx5_fpga_connect connect;
++	struct mlx5_fpga_device *fdev = context->tdev->fdev;
++	u32 fpga_cap[MLX5_ST_SZ_DW(fpga_cap)] = {0};
++
++	if (!fdev)
++		return -ENXIO;
++
++	switch (cmd) {
++	case IOCTL_ACCESS_TYPE:
++		if (arg > MLX5_FPGA_ACCESS_TYPE_MAX) {
++			dev_err(mlx5_fpga_dev(fdev),
++				"unknown access type %lu\n", arg);
++			err = -EINVAL;
++			break;
++		}
++		context->access_type = arg;
++		break;
++	case IOCTL_FPGA_LOAD:
++		if (arg > MLX5_FPGA_IMAGE_MAX) {
++			dev_err(mlx5_fpga_dev(fdev),
++				"unknown image type %lu\n", arg);
++			err = -EINVAL;
++			break;
++		}
++		err = mlx5_fpga_device_reload(fdev, arg);
++		break;
++	case IOCTL_FPGA_RESET:
++		err = mlx5_fpga_device_reload(fdev, MLX5_FPGA_IMAGE_MAX + 1);
++		break;
++	case IOCTL_FPGA_IMAGE_SEL:
++		if (arg > MLX5_FPGA_IMAGE_MAX) {
++			dev_err(mlx5_fpga_dev(fdev),
++				"unknown image type %lu\n", arg);
++			err = -EINVAL;
++			break;
++		}
++		err = mlx5_fpga_flash_select(fdev, arg);
++		break;
++	case IOCTL_FPGA_QUERY:
++		mlx5_fpga_device_query(fdev, &query);
++
++		if (copy_to_user((void __user *)arg, &query, sizeof(query))) {
++			dev_err(mlx5_fpga_dev(fdev),
++				"Failed to copy data to user buffer\n");
++			err = -EFAULT;
++		}
++		break;
++	case IOCTL_FPGA_CAP:
++		mlx5_fpga_get_cap(fdev, fpga_cap);
++		if (copy_to_user((void __user *)arg, fpga_cap, sizeof(fpga_cap))) {
++			dev_err(mlx5_fpga_dev(fdev),
++				"Failed to copy data to user buffer\n");
++			err = -EFAULT;
++		}
++		break;
++	case IOCTL_FPGA_TEMPERATURE:
++		err = copy_from_user(&temperature, (void *)arg,
++				     sizeof(temperature));
++		if (err) {
++			dev_err(mlx5_fpga_dev(fdev),
++				"Failed to copy data from user buffer\n");
++			err = -EFAULT;
++		}
++		mlx5_fpga_temperature(fdev, &temperature);
++		err = copy_to_user((void __user *)arg, &temperature,
++				   sizeof(temperature));
++		if (err) {
++			dev_err(mlx5_fpga_dev(fdev),
++				"Failed to copy data to user buffer\n");
++			err = -EFAULT;
++		}
++		break;
++	case IOCTL_FPGA_CONNECT:
++		err = copy_from_user(&connect, (void *)arg,
++				     sizeof(connect));
++		if (err) {
++			dev_err(mlx5_fpga_dev(fdev),
++				"Failed to copy data from user buffer\n");
++			err = -EFAULT;
++		}
++		mlx5_fpga_connectdisconnect(fdev, &connect);
++		err = copy_to_user((void __user *)arg, &connect,
++				   sizeof(connect));
++		if (err) {
++			dev_err(mlx5_fpga_dev(fdev),
++				"Failed to copy data to user buffer\n");
++			err = -EFAULT;
++		}
++		break;
++	default:
++		dev_err(mlx5_fpga_dev(fdev),
++			"unknown ioctl command 0x%08x\n", cmd);
++		err = -ENOIOCTLCMD;
++	}
++	return err;
++}
++
++static const struct file_operations tools_fops = {
++		.owner = THIS_MODULE,
++		.open = tools_char_open,
++		.release = tools_char_release,
++		.read = tools_char_read,
++		.write = tools_char_write,
++		.llseek = tools_char_llseek,
++		.unlocked_ioctl = tools_char_ioctl,
++};
++
++int mlx5_fpga_tools_char_add_one(struct mlx5_fpga_tools_dev *tdev)
++{
++	int ret = 0;
++
++	ret = ida_simple_get(&minor_alloc, 1, 0, GFP_KERNEL);
++	if (ret < 0) {
++		dev_err(mlx5_fpga_dev(tdev->fdev),
++			"Failed to allocate minor number: %d", ret);
++		goto out;
++	}
++	tdev->dev = MKDEV(major_number, ret);
++
++	atomic_set(&tdev->open_count, 0);
++	cdev_init(&tdev->cdev, &tools_fops);
++	ret = cdev_add(&tdev->cdev, tdev->dev, 1);
++	if (ret) {
++		dev_err(mlx5_fpga_dev(tdev->fdev),
++			"Failed to add cdev: %d\n", ret);
++		goto err_minor;
++	}
++
++	tdev->char_device = device_create(char_class, NULL, tdev->dev, NULL,
++					  "%s%s",
++					  dev_name(mlx5_fpga_dev(tdev->fdev)),
++					  MLX5_FPGA_TOOLS_NAME_SUFFIX);
++	if (IS_ERR(tdev->char_device)) {
++		ret = PTR_ERR(tdev->char_device);
++		tdev->char_device = NULL;
++		dev_err(mlx5_fpga_dev(tdev->fdev),
++			"Failed to create a char device: %d\n", ret);
++		goto err_cdev;
++	}
++
++	dev_dbg(mlx5_fpga_dev(tdev->fdev),
++		"tools char device %u:%u created\n", MAJOR(tdev->dev),
++		MINOR(tdev->dev));
++	goto out;
++
++err_cdev:
++	cdev_del(&tdev->cdev);
++err_minor:
++	ida_simple_remove(&minor_alloc, MINOR(tdev->dev));
++out:
++	return ret;
++}
++
++void mlx5_fpga_tools_char_remove_one(struct mlx5_fpga_tools_dev *tdev)
++{
++	WARN_ON(atomic_read(&tdev->open_count) > 0);
++	device_destroy(char_class, tdev->dev);
++	cdev_del(&tdev->cdev);
++	ida_simple_remove(&minor_alloc, MINOR(tdev->dev));
++	dev_err(mlx5_fpga_dev(tdev->fdev),
++		"tools char device %u:%u destroyed\n", MAJOR(tdev->dev),
++		MINOR(tdev->dev));
++}
++
++int mlx5_fpga_tools_char_init(void)
++{
++	int ret = 0;
++
++	major_number = register_chrdev(0, MLX5_FPGA_TOOLS_DRIVER_NAME,
++				       &tools_fops);
++	if (major_number < 0) {
++		ret = major_number;
++		pr_err("Failed to register major number for char device: %d\n",
++		       ret);
++		goto out;
++	}
++	pr_debug("mlx5_fpga_tools major number is %d\n", major_number);
++
++char_class = class_create(MLX5_FPGA_TOOLS_DRIVER_NAME);
++//	char_class = class_create(THIS_MODULE, MLX5_FPGA_TOOLS_DRIVER_NAME);
++	if (IS_ERR(char_class)) {
++		ret = PTR_ERR(char_class);
++		pr_err("Failed to create char class: %d\n", ret);
++		goto err_chrdev;
++	}
++
++	ida_init(&minor_alloc);
++
++	goto out;
++
++err_chrdev:
++	unregister_chrdev(major_number, MLX5_FPGA_TOOLS_DRIVER_NAME);
++
++out:
++	return ret;
++}
++
++void mlx5_fpga_tools_char_deinit(void)
++{
++	ida_destroy(&minor_alloc);
++	class_destroy(char_class);
++	unregister_chrdev(major_number, MLX5_FPGA_TOOLS_DRIVER_NAME);
++	pr_debug("mlx5_fpga_tools major number freed\n");
++}
+diff --git a/drivers/net/ethernet/mellanox/mlx5/fpga/tools_char.h b/drivers/net/ethernet/mellanox/mlx5/fpga/tools_char.h
+new file mode 100644
+index 0000000..08da212
+--- /dev/null
++++ b/drivers/net/ethernet/mellanox/mlx5/fpga/tools_char.h
+@@ -0,0 +1,45 @@
++/*
++ * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
++ *
++ * This software is available to you under a choice of one of two
++ * licenses.  You may choose to be licensed under the terms of the GNU
++ * General Public License (GPL) Version 2, available from the file
++ * COPYING in the main directory of this source tree, or the
++ * OpenIB.org BSD license below:
++ *
++ *     Redistribution and use in source and binary forms, with or
++ *     without modification, are permitted provided that the following
++ *     conditions are met:
++ *
++ *      - Redistributions of source code must retain the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer.
++ *
++ *      - Redistributions in binary form must reproduce the above
++ *        copyright notice, this list of conditions and the following
++ *        disclaimer in the documentation and/or other materials
++ *        provided with the distribution.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ *
++ */
++
++#ifndef __TOOLS_CHAR_H__
++#define __TOOLS_CHAR_H__
++
++#include "tools.h"
++
++int mlx5_fpga_tools_char_init(void);
++void mlx5_fpga_tools_char_deinit(void);
++
++int mlx5_fpga_tools_char_add_one(struct mlx5_fpga_tools_dev *tdev);
++void mlx5_fpga_tools_char_remove_one(struct mlx5_fpga_tools_dev *tdev);
++
++#endif	/* __TOOLS_CHAR_H__ */
+diff --git a/include/linux/mlx5/driver.h b/include/linux/mlx5/driver.h
+index 8da3a53..f0dd67a 100644
+--- a/include/linux/mlx5/driver.h
++++ b/include/linux/mlx5/driver.h
+@@ -118,6 +118,7 @@ enum {
+ 	MLX5_REG_FPGA_CAP	 = 0x4022,
+ 	MLX5_REG_FPGA_CTRL	 = 0x4023,
+ 	MLX5_REG_FPGA_ACCESS_REG = 0x4024,
++	MLX5_REG_FPGA_SHELL_CNTR = 0x4025,
+ 	MLX5_REG_CORE_DUMP	 = 0x402e,
+ 	MLX5_REG_PCAP		 = 0x5001,
+ 	MLX5_REG_PMTU		 = 0x5003,
+diff --git a/include/linux/mlx5/mlx5_ifc.h b/include/linux/mlx5/mlx5_ifc.h
+index 36fdd84..5a3769d 100644
+--- a/include/linux/mlx5/mlx5_ifc.h
++++ b/include/linux/mlx5/mlx5_ifc.h
+@@ -523,6 +523,8 @@ struct mlx5_ifc_odp_per_transport_service_cap_bits {
+ 	u8         reserved_at_6[0x1a];
+ };
+ 
++
++/* moved to mlx5_ifc.h
+ struct mlx5_ifc_ipv4_layout_bits {
+ 	u8         reserved_at_0[0x60];
+ 
+@@ -538,6 +540,8 @@ union mlx5_ifc_ipv6_layout_ipv4_layout_auto_bits {
+ 	struct mlx5_ifc_ipv4_layout_bits ipv4_layout;
+ 	u8         reserved_at_0[0x80];
+ };
++*/
++
+ 
+ enum {
+ 	MLX5_PACKET_L4_TYPE_NONE,
+diff --git a/include/linux/mlx5/mlx5_ifc_fpga.h b/include/linux/mlx5/mlx5_ifc_fpga.h
+index 0596472..1e90afc 100644
+--- a/include/linux/mlx5/mlx5_ifc_fpga.h
++++ b/include/linux/mlx5/mlx5_ifc_fpga.h
+@@ -32,6 +32,37 @@
+ #ifndef MLX5_IFC_FPGA_H
+ #define MLX5_IFC_FPGA_H
+ 
++struct mlx5_ifc_ipv4_layout_bits {
++	u8         reserved_at_0[0x60];
++
++	u8         ipv4[0x20];
++};
++
++struct mlx5_ifc_ipv6_layout_bits {
++	u8         ipv6[16][0x8];
++};
++
++union mlx5_ifc_ipv6_layout_ipv4_layout_auto_bits {
++	struct mlx5_ifc_ipv6_layout_bits ipv6_layout;
++	struct mlx5_ifc_ipv4_layout_bits ipv4_layout;
++	u8         reserved_at_0[0x80];
++};
++
++enum {
++	MLX5_FPGA_CAP_SANDBOX_VENDOR_ID_MLNX = 0x2c9,
++};
++
++enum {
++	MLX5_FPGA_CAP_SANDBOX_PRODUCT_ID_EXAMPLE  = 0x1,
++	MLX5_FPGA_CAP_SANDBOX_PRODUCT_ID_IPSEC    = 0x2,
++	MLX5_FPGA_CAP_SANDBOX_PRODUCT_ID_TLS      = 0x3,
++};
++
++enum {
++	MLX5_FPGA_SHELL_CAPS_QP_TYPE_SHELL_QP    = 0x1,
++	MLX5_FPGA_SHELL_CAPS_QP_TYPE_SANDBOX_QP  = 0x2,
++};
++
+ struct mlx5_ifc_fpga_shell_caps_bits {
+ 	u8         max_num_qps[0x10];
+ 	u8         reserved_at_10[0x8];
+@@ -115,6 +146,8 @@ enum {
+ 	MLX5_FPGA_CTRL_OPERATION_SANDBOX_BYPASS_ON   = 0x4,
+ 	MLX5_FPGA_CTRL_OPERATION_SANDBOX_BYPASS_OFF  = 0x5,
+ 	MLX5_FPGA_CTRL_OPERATION_RESET_SANDBOX       = 0x6,
++	MLX5_FPGA_CTRL_OPERATION_DISCONNECT          = 0x9,
++	MLX5_FPGA_CTRL_OPERATION_CONNECT             = 0xA,
+ };
+ 
+ struct mlx5_ifc_fpga_ctrl_bits {
+@@ -362,6 +395,130 @@ struct mlx5_ifc_fpga_destroy_qp_out_bits {
+ 	u8         reserved_at_40[0x40];
+ };
+ 
++struct mlx5_ifc_tls_extended_cap_bits {
++	u8         aes_gcm_128[0x1];
++	u8         aes_gcm_256[0x1];
++	u8         reserved_at_2[0x1e];
++	u8         reserved_at_20[0x20];
++	u8         context_capacity_total[0x20];
++	u8         context_capacity_rx[0x20];
++	u8         context_capacity_tx[0x20];
++	u8         reserved_at_a0[0x10];
++	u8         tls_counter_size[0x10];
++	u8         tls_counters_addr_low[0x20];
++	u8         tls_counters_addr_high[0x20];
++	u8         rx[0x1];
++	u8         tx[0x1];
++	u8         tls_v12[0x1];
++	u8         tls_v13[0x1];
++	u8         lro[0x1];
++	u8         ipv6[0x1];
++	u8         reserved_at_106[0x1a];
++};
++
++struct mlx5_ifc_ipsec_extended_cap_bits {
++	u8         encapsulation[0x20];
++
++	u8         reserved_0[0x12];
++	u8         v2_command[0x1];
++	u8         udp_encap[0x1];
++	u8         rx_no_trailer[0x1];
++	u8         ipv4_fragment[0x1];
++	u8         ipv6[0x1];
++	u8         esn[0x1];
++	u8         lso[0x1];
++	u8         transport_and_tunnel_mode[0x1];
++	u8         tunnel_mode[0x1];
++	u8         transport_mode[0x1];
++	u8         ah_esp[0x1];
++	u8         esp[0x1];
++	u8         ah[0x1];
++	u8         ipv4_options[0x1];
++
++	u8         auth_alg[0x20];
++
++	u8         enc_alg[0x20];
++
++	u8         sa_cap[0x20];
++
++	u8         reserved_1[0x10];
++	u8         number_of_ipsec_counters[0x10];
++
++	u8         ipsec_counters_addr_low[0x20];
++	u8         ipsec_counters_addr_high[0x20];
++};
++
++struct mlx5_ifc_ipsec_counters_bits {
++	u8         dec_in_packets[0x40];
++
++	u8         dec_out_packets[0x40];
++
++	u8         dec_bypass_packets[0x40];
++
++	u8         enc_in_packets[0x40];
++
++	u8         enc_out_packets[0x40];
++
++	u8         enc_bypass_packets[0x40];
++
++	u8         drop_dec_packets[0x40];
++
++	u8         failed_auth_dec_packets[0x40];
++
++	u8         drop_enc_packets[0x40];
++
++	u8         success_add_sa[0x40];
++
++	u8         fail_add_sa[0x40];
++
++	u8         success_delete_sa[0x40];
++
++	u8         fail_delete_sa[0x40];
++
++	u8         dropped_cmd[0x40];
++};
++
++struct mlx5_ifc_fpga_shell_counters_bits {
++	u8         reserved_0[0x20];
++
++	u8         clear[0x1];
++	u8         reserved_1[0x1f];
++
++	u8         reserved_2[0x40];
++
++	u8         ddr_read_requests[0x40];
++
++	u8         ddr_write_requests[0x40];
++
++	u8         ddr_read_bytes[0x40];
++
++	u8         ddr_write_bytes[0x40];
++
++	u8         reserved_3[0x200];
++};
++
++enum {
++	MLX5_FPGA_SHELL_QP_PACKET_TYPE_DDR_READ            = 0x0,
++	MLX5_FPGA_SHELL_QP_PACKET_TYPE_DDR_WRITE           = 0x1,
++	MLX5_FPGA_SHELL_QP_PACKET_TYPE_DDR_READ_RESPONSE   = 0x2,
++	MLX5_FPGA_SHELL_QP_PACKET_TYPE_DDR_WRITE_RESPONSE  = 0x3,
++};
++
++struct mlx5_ifc_fpga_shell_qp_packet_bits {
++	u8         version[0x4];
++	u8         syndrome[0x4];
++	u8         reserved_at_8[0x4];
++	u8         type[0x4];
++	u8         reserved_at_10[0x8];
++	u8         tid[0x8];
++
++	u8         len[0x20];
++
++	u8         address[0x40];
++
++	u8         data[0][0x8];
++};
++
+ enum {
+ 	MLX5_FPGA_QP_ERROR_EVENT_SYNDROME_RETRY_COUNTER_EXPIRED  = 0x1,
+ 	MLX5_FPGA_QP_ERROR_EVENT_SYNDROME_RNR_EXPIRED            = 0x2,
+@@ -378,4 +535,131 @@ struct mlx5_ifc_fpga_qp_error_event_bits {
+ 	u8         reserved_at_c0[0x8];
+ 	u8         fpga_qpn[0x18];
+ };
++enum mlx5_ifc_fpga_ipsec_response_syndrome {
++	MLX5_FPGA_IPSEC_RESPONSE_SUCCESS = 0,
++	MLX5_FPGA_IPSEC_RESPONSE_ILLEGAL_REQUEST = 1,
++	MLX5_FPGA_IPSEC_RESPONSE_SADB_ISSUE = 2,
++	MLX5_FPGA_IPSEC_RESPONSE_WRITE_RESPONSE_ISSUE = 3,
++};
++
++struct mlx5_ifc_fpga_ipsec_cmd_resp {
++	__be32 syndrome;
++	union {
++		__be32 sw_sa_handle;
++		__be32 flags;
++	};
++	u8 reserved[24];
++} __packed;
++
++enum mlx5_ifc_fpga_ipsec_cmd_opcode {
++	MLX5_FPGA_IPSEC_CMD_OP_ADD_SA = 0,
++	MLX5_FPGA_IPSEC_CMD_OP_DEL_SA = 1,
++	MLX5_FPGA_IPSEC_CMD_OP_ADD_SA_V2 = 2,
++	MLX5_FPGA_IPSEC_CMD_OP_DEL_SA_V2 = 3,
++	MLX5_FPGA_IPSEC_CMD_OP_MOD_SA_V2 = 4,
++	MLX5_FPGA_IPSEC_CMD_OP_SET_CAP = 5,
++};
++
++enum mlx5_ifc_fpga_ipsec_cap {
++	MLX5_FPGA_IPSEC_CAP_NO_TRAILER = BIT(0),
++};
++
++struct mlx5_ifc_fpga_ipsec_cmd_cap {
++	__be32 cmd;
++	__be32 flags;
++	u8 reserved[24];
++} __packed;
++
++enum mlx5_ifc_fpga_ipsec_sa_flags {
++	MLX5_FPGA_IPSEC_SA_ESN_EN = BIT(0),
++	MLX5_FPGA_IPSEC_SA_ESN_OVERLAP = BIT(1),
++	MLX5_FPGA_IPSEC_SA_IPV6 = BIT(2),
++	MLX5_FPGA_IPSEC_SA_DIR_SX = BIT(3),
++	MLX5_FPGA_IPSEC_SA_SPI_EN = BIT(4),
++	MLX5_FPGA_IPSEC_SA_SA_VALID = BIT(5),
++	MLX5_FPGA_IPSEC_SA_IP_ESP = BIT(6),
++	MLX5_FPGA_IPSEC_SA_IP_AH = BIT(7),
++};
++
++enum mlx5_ifc_fpga_ipsec_sa_enc_mode {
++	MLX5_FPGA_IPSEC_SA_ENC_MODE_NONE = 0,
++	MLX5_FPGA_IPSEC_SA_ENC_MODE_AES_GCM_128_AUTH_128 = 1,
++	MLX5_FPGA_IPSEC_SA_ENC_MODE_AES_GCM_256_AUTH_128 = 3,
++};
++
++struct mlx5_ifc_fpga_ipsec_sa_v1 {
++	__be32 cmd;
++	u8 key_enc[32];
++	u8 key_auth[32];
++	__be32 sip[4];
++	__be32 dip[4];
++	union {
++		struct {
++			__be32 reserved;
++			u8 salt_iv[8];
++			__be32 salt;
++		} __packed gcm;
++		struct {
++			u8 salt[16];
++		} __packed cbc;
++	};
++	__be32 spi;
++	__be32 sw_sa_handle;
++	__be16 tfclen;
++	u8 enc_mode;
++	u8 reserved1[2];
++	u8 flags;
++	u8 reserved2[2];
++};
++
++struct mlx5_ifc_fpga_ipsec_sa {
++	struct mlx5_ifc_fpga_ipsec_sa_v1 ipsec_sa_v1;
++	__be16 udp_sp;
++	__be16 udp_dp;
++	u8 reserved1[4];
++	__be32 esn;
++	__be16 vid;	/* only 12 bits, rest is reserved */
++	__be16 reserved2;
++} __packed;
++
++enum fpga_tls_cmds {
++	CMD_SETUP_STREAM		= 0x1001,
++	CMD_TEARDOWN_STREAM		= 0x1002,
++	CMD_RESYNC_RX			= 0x1003,
++};
++
++#define MLX5_TLS_1_2 (0)
++
++#define MLX5_TLS_ALG_AES_GCM_128 (0)
++#define MLX5_TLS_ALG_AES_GCM_256 (1)
++
++struct mlx5_ifc_tls_cmd_bits {
++	u8         command_type[0x20];
++	u8         ipv6[0x1];
++	u8         direction_sx[0x1];
++	u8         tls_version[0x2];
++	u8         reserved[0x1c];
++	u8         swid[0x20];
++	u8         src_port[0x10];
++	u8         dst_port[0x10];
++	union mlx5_ifc_ipv6_layout_ipv4_layout_auto_bits src_ipv4_src_ipv6;
++	union mlx5_ifc_ipv6_layout_ipv4_layout_auto_bits dst_ipv4_dst_ipv6;
++	u8         tls_rcd_sn[0x40];
++	u8         tcp_sn[0x20];
++	u8         tls_implicit_iv[0x20];
++	u8         tls_xor_iv[0x40];
++	u8         encryption_key[0x100];
++	u8         alg[4];
++	u8         reserved2[0x1c];
++	u8         reserved3[0x4a0];
++};
++
++struct mlx5_ifc_tls_resp_bits {
++	u8         syndrome[0x20];
++	u8         stream_id[0x20];
++	u8         reserved[0x40];
++};
++
++#define MLX5_TLS_COMMAND_SIZE (0x100)
++
+ #endif /* MLX5_IFC_FPGA_H */
+diff --git a/ofed_scripts/Makefile b/ofed_scripts/Makefile
+index 538deb3..c526c61 100644
+--- a/ofed_scripts/Makefile
++++ b/ofed_scripts/Makefile
+@@ -15,6 +15,7 @@ obj-$(CONFIG_INFINIBAND_IPATH)  += drivers/infiniband/hw/ipath/
+ obj-$(CONFIG_INFINIBAND_EHCA)   += drivers/infiniband/hw/ehca/
+ obj-$(CONFIG_INFINIBAND_AMSO1100)   += drivers/infiniband/hw/amso1100/
+ obj-$(CONFIG_MLX5_CORE)         += drivers/net/ethernet/mellanox/mlx5/core/
++obj-$(CONFIG_MLX5_FPGA_TOOLS)   += drivers/net/ethernet/mellanox/mlx5/fpga/
+ obj-$(CONFIG_MLXFW)             += drivers/net/ethernet/mellanox/mlxfw/
+ obj-$(CONFIG_MLXSW_CORE)	+= drivers/net/ethernet/mellanox/mlxsw/
+ obj-$(CONFIG_RDS)               += net/rds/
+diff --git a/ofed_scripts/configure b/ofed_scripts/configure
+index 53353fd..3d6e327 100755
+--- a/ofed_scripts/configure
++++ b/ofed_scripts/configure
+@@ -107,6 +107,9 @@ Usage:  `basename $0` [options]
+     --with-mlxfw-mod              make CONFIG_MLXFW=m [no]
+     --without-mlxfw-mod           [yes]
+ 
++    --with-innova-flex            make CONFIG_MLX5_ACCEL=y CONFIG_MLX5_FPGA=y CONFIG_MLX5_FPGA_TOOLS=m CONFIG_MLX5_EN_TLS=y [no]
++    --without-innova-flex         [yes]
++
+     --with-mlx5-ipsec             make CONFIG_MLX5_ACCEL=y CONFIG_MLX5_IPSEC=y CONFIG_MLX5_EN_IPSEC=y [no]
+     --without-mlx5-ipsec          [yes]
+ 
+@@ -876,6 +879,8 @@ CONFIG_MLX5_EN_TLS=${CONFIG_MLX5_EN_TLS:-''}
+ CONFIG_MLX5_TLS=${CONFIG_MLX5_TLS:-''}
+ CONFIG_MLX5_IPSEC=${CONFIG_MLX5_IPSEC:-''}
+ CONFIG_MLX5_EN_IPSEC=${CONFIG_MLX5_EN_IPSEC:-''}
++CONFIG_MLX5_FPGA=${CONFIG_MLX5_FPGA:-''}
++CONFIG_MLX5_FPGA_TOOLS=${CONFIG_MLX5_FPGA_TOOLS:-''}
+ CONFIG_MLX5_CORE=${CONFIG_MLX5_CORE:-''}
+ CONFIG_MLX5_CORE_EN=${CONFIG_MLX5_CORE_EN:-''}
+ CONFIG_MLX5_CORE_EN_DCB=${CONFIG_MLX5_CORE_EN_DCB:-''}
+@@ -909,7 +914,8 @@ CONFIG_IPOIB_VERSION=${CONFIG_IPOIB_VERSION:-''}
+ # From OFED 5.3 FPGA feature disabled and inbox FPGA configs unset
+ CONFIG_MLX5_FPGA_TLS=""
+ CONFIG_MLX5_FPGA_IPSEC=""
+-CONFIG_MLX5_FPGA=""
++CONFIG_MLX5_FPGA=${CONFIG_MLX5_FPGA:-''}
++CONFIG_MLX5_FPGA_TOOLS=${CONFIG_MLX5_FPGA_TOOLS:-''}
+ 
+ CONFIG_INFINIBAND_IPOIB_DEBUG=${CONFIG_INFINIBAND_IPOIB_DEBUG:-''}
+ CONFIG_INFINIBAND_ISER=${CONFIG_INFINIBAND_ISER:-''}
+@@ -1325,6 +1331,16 @@ main()
+ 		--without-mlxfw-mod)
+ 			CONFIG_MLXFW=
+ 			;;
++		--with-innova-flex)
++			CONFIG_MLX5_ACCEL="y"
++			CONFIG_MLX5_EN_TLS="y"
++			CONFIG_MLX5_FPGA="y"
++			CONFIG_MLX5_FPGA_TOOLS="m"
++		;;
++		--without-innova-flex)
++			CONFIG_MLX5_FPGA=
++			CONFIG_MLX5_FPGA_TOOLS=
++		;;
+ 		--with-mlx5-ipsec)
+ 			CONFIG_MLX5_ACCEL="y"
+ 			CONFIG_MLX5_IPSEC="y"
+@@ -1356,7 +1372,7 @@ main()
+ 			CONFIG_MLX5_DEBUG="y"
+ 			CONFIG_MLX5_ACCEL="y"
+ 			CONFIG_MLX5_TLS="y"
+-			CONFIG_MLX5_EN_TLS="y"
++#			CONFIG_MLX5_EN_TLS="y"
+ 			add_conf "# Load MLX5 modules" "MLX5_LOAD=yes"
+ 			;;
+ 		--with-mlx5-core-only-mod)
+diff --git a/ofed_scripts/makefile b/ofed_scripts/makefile
+index 1aacec1..40a88f9 100644
+--- a/ofed_scripts/makefile
++++ b/ofed_scripts/makefile
+@@ -230,6 +230,7 @@ kernel: $(COMPAT_CONFIG) $(COMPAT_AUTOCONF) autoversion
+ 		CONFIG_MLX5_IPSEC=$(CONFIG_MLX5_IPSEC) \
+ 		CONFIG_MLX5_EN_IPSEC=$(CONFIG_MLX5_EN_IPSEC) \
+ 		CONFIG_MLX5_FPGA=$(CONFIG_MLX5_FPGA) \
++		CONFIG_MLX5_FPGA_TOOLS=$(CONFIG_MLX5_FPGA_TOOLS) \
+ 		CONFIG_MLX5_CORE_EN=$(CONFIG_MLX5_CORE_EN) \
+ 		CONFIG_MLX5_CORE_EN_DCB=$(CONFIG_MLX5_CORE_EN_DCB) \
+ 		CONFIG_MLX5_EN_ARFS=$(CONFIG_MLX5_EN_ARFS) \
+-- 
+2.43.0
+
