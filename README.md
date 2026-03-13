@@ -393,8 +393,7 @@ Jump-to-Innova2-User menu
 Your choice:
 ```
 
-Refer to the [innova2_flex_xcku15p](innova2_flex_xcku15p_notes.html#test-the-innova-2) project for further notes on working with the Innova2.
-
+Refer to the [innova2_flex_xcku15p](https://github.com/mwrnd/innova2_flex_xcku15p_notes?tab=readme-ov-file#loading-a-user-image) project for further notes on working with the Innova2.
 
 
 
